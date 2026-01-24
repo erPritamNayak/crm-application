@@ -137,6 +137,26 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class UserDetails(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    email: EmailStr
+    name: str
+    role: Literal['Admin', 'HR', 'Manager', 'Employee']
+    employee_id: Optional[str] = None
+    created_at: datetime
+    
+    # Employee details (only for employees)
+    phone: Optional[str] = None
+    department: Optional[str] = None
+    job_role: Optional[str] = None
+    joining_date: Optional[str] = None
+    salary: Optional[float] = None
+    status: Optional[Literal['Active', 'Inactive']] = None
+    profile_photo: Optional[str] = None
+    address: Optional[str] = None
+    emergency_contact: Optional[str] = None
+
 class Employee(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -309,7 +329,37 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     
     token = create_access_token(new_user.id, new_user.email, new_user.role)
-    return {'token': token, 'user': {'id': new_user.id, 'email': new_user.email, 'name': new_user.name, 'role': new_user.role, 'employee_id': new_user.employee_id}}
+    
+    # Prepare complete user details
+    user_data = {
+        'id': new_user.id,
+        'email': new_user.email,
+        'name': new_user.name,
+        'role': new_user.role,
+        'employee_id': new_user.employee_id,
+        'created_at': new_user.created_at
+    }
+    
+    # If user is an employee, fetch additional employee details
+    if new_user.role == 'Employee' and new_user.employee_id:
+        employee = db.query(EmployeeModel).filter(
+            EmployeeModel.employee_id == new_user.employee_id
+        ).first()
+        
+        if employee:
+            user_data.update({
+                'phone': employee.phone,
+                'department': employee.department,
+                'job_role': employee.job_role,
+                'joining_date': employee.joining_date,
+                'salary': employee.salary,
+                'status': employee.status,
+                'profile_photo': employee.profile_photo,
+                'address': employee.address,
+                'emergency_contact': employee.emergency_contact
+            })
+    
+    return {'token': token, 'user': user_data}
 
 @api_router.post('/auth/login')
 def login(credentials: UserLogin, db: Session = Depends(get_db)):
@@ -318,11 +368,70 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail='Invalid credentials')
     
     token = create_access_token(user.id, user.email, user.role)
-    return {'token': token, 'user': {'id': user.id, 'email': user.email, 'name': user.name, 'role': user.role}}
+    
+    # Prepare complete user details
+    user_data = {
+        'id': user.id,
+        'email': user.email,
+        'name': user.name,
+        'role': user.role,
+        'employee_id': user.employee_id,
+        'created_at': user.created_at
+    }
+    
+    # If user is an employee, fetch additional employee details
+    if user.role == 'Employee' and user.employee_id:
+        employee = db.query(EmployeeModel).filter(
+            EmployeeModel.employee_id == user.employee_id
+        ).first()
+        
+        if employee:
+            user_data.update({
+                'phone': employee.phone,
+                'department': employee.department,
+                'job_role': employee.job_role,
+                'joining_date': employee.joining_date,
+                'salary': employee.salary,
+                'status': employee.status,
+                'profile_photo': employee.profile_photo,
+                'address': employee.address,
+                'emergency_contact': employee.emergency_contact
+            })
+    
+    return {'token': token, 'user': user_data}
 
-@api_router.get('/auth/me')
-async def get_me(current_user: UserModel = Depends(get_current_user)):
-    return {'id': current_user.id, 'email': current_user.email, 'name': current_user.name, 'role': current_user.role}
+@api_router.get('/auth/me', response_model=UserDetails)
+async def get_me(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Base user details
+    user_data = {
+        'id': current_user.id,
+        'email': current_user.email,
+        'name': current_user.name,
+        'role': current_user.role,
+        'employee_id': current_user.employee_id,
+        'created_at': current_user.created_at
+    }
+    
+    # If user is an employee, fetch additional employee details
+    if current_user.role == 'Employee' and current_user.employee_id:
+        employee = db.query(EmployeeModel).filter(
+            EmployeeModel.employee_id == current_user.employee_id
+        ).first()
+        
+        if employee:
+            user_data.update({
+                'phone': employee.phone,
+                'department': employee.department,
+                'job_role': employee.job_role,
+                'joining_date': employee.joining_date,
+                'salary': employee.salary,
+                'status': employee.status,
+                'profile_photo': employee.profile_photo,
+                'address': employee.address,
+                'emergency_contact': employee.emergency_contact
+            })
+    
+    return user_data
 
 # ============= EMPLOYEE ROUTES =============
 
@@ -455,7 +564,7 @@ def update_employee_profile(
 def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
-    employee = db.query(EmployeeModel).filter(EmployeeModel.id == punch_data.employee_id).first()
+    employee = db.query(EmployeeModel).filter(EmployeeModel.employee_id == punch_data.employee_id).first()
     if not employee:
         raise HTTPException(status_code=404, detail='Employee not found')
     

@@ -287,10 +287,10 @@ export const IDCards = () => {
                 </DialogTrigger>
                 {selectedEmployee?.id === employee.id && (
                   <DialogContent className="max-w-6xl bg-gray-50 border-0 shadow-2xl">
-                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 -m-6 mb-6">
+                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6">
                       <DialogHeader>
                         <DialogTitle className="text-2xl font-bold text-white">
-                          Corporate ID Card Generator
+                          ID Card Generator
                         </DialogTitle>
                         <p className="text-blue-100 mt-2">
                           {selectedEmployee.name} • {selectedEmployee.employee_id}

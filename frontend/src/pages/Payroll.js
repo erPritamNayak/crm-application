@@ -76,7 +76,7 @@ export const Payroll = () => {
     );
   }
 
-  const selectedEmp = employees.find(emp => emp.id === selectedEmployee);
+  const selectedEmp = employees.find(emp => emp.employee_id === selectedEmployee);
 
   return (
     <div className="space-y-6" data-testid="payroll-page">
@@ -101,7 +101,7 @@ export const Payroll = () => {
               >
                 <option value="">Select an employee</option>
                 {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
+                  <option key={emp.employee_id} value={emp.employee_id}>
                     {emp.name} ({emp.employee_id})
                   </option>
                 ))}

@@ -47,12 +47,15 @@ export const Attendance = () => {
       const response = await axios.get(`${API}/attendance`, { params: { month: today } });
       setAttendance(response.data);
       
-      // Check today's attendance
-      const todayStr = format(new Date(), 'yyyy-MM-dd');
-      const todayRecord = response.data.find(
-        record => record.employee_id === selectedEmployee && record.date === todayStr
-      );
-      setTodayAttendance(todayRecord || null);
+      // Check today's attendance - use appropriate employee ID
+      const employeeId = canManageAttendance ? selectedEmployee : user?.employee_id;
+      if (employeeId) {
+        const todayStr = format(new Date(), 'yyyy-MM-dd');
+        const todayRecord = response.data.find(
+          record => record.employee_id === employeeId && record.date === todayStr
+        );
+        setTodayAttendance(todayRecord || null);
+      }
     } catch (error) {
       toast.error('Failed to load attendance');
     } finally {
@@ -60,16 +63,35 @@ export const Attendance = () => {
     }
   };
 
+  // Refetch attendance when selected employee changes (for admins)
+  useEffect(() => {
+    if (selectedEmployee || user?.employee_id) {
+      fetchAttendance();
+    }
+  }, [selectedEmployee, user?.employee_id]);
+
   const handlePunch = async (action) => {
-    if (!selectedEmployee) {
-      toast.error('Please select an employee');
+    // For employees, always use their own employee_id
+    // For admins/managers, use the selected employee
+    const employeeId = canManageAttendance ? selectedEmployee : user?.employee_id;
+    
+    if (!employeeId) {
+      toast.error('Employee information not available');
       return;
+    }
+
+    // Get the correct employee name
+    let employeeName = user?.name;
+    if (canManageAttendance && selectedEmployee) {
+      const selectedEmp = employees.find(emp => emp.employee_id === selectedEmployee);
+      employeeName = selectedEmp?.name || user?.name;
     }
 
     try {
       const response = await axios.post(`${API}/attendance/punch`, {
-        employee_id: selectedEmployee,
-        action: action
+        employee_id: employeeId,
+        action: action,
+        employee_name: employeeName
       });
       toast.success(response.data.message);
       fetchAttendance();
@@ -112,6 +134,23 @@ export const Attendance = () => {
       <Card className="p-6 border border-gray-200 bg-white">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Mark Attendance</h3>
         
+        {/* Employee Info Display for Non-Admin Users */}
+        {!canManageAttendance && user && (
+          <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-blue-900">Employee Information</p>
+                <p className="text-base font-medium text-gray-900">{user.name}</p>
+                <p className="text-sm text-gray-600">Employee ID: {user.employee_id}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-600">Department</p>
+                <p className="text-sm font-medium text-gray-900">{user.department || 'N/A'}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {canManageAttendance && (
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Select Employee</label>
@@ -123,7 +162,7 @@ export const Attendance = () => {
             >
               <option value="">Select an employee</option>
               {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
+                <option key={emp.employee_id} value={emp.employee_id}>
                   {emp.name} ({emp.employee_id})
                 </option>
               ))}

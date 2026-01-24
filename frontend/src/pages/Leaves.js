@@ -115,7 +115,7 @@ export const Leaves = () => {
   };
 
   const handleEmployeeChange = (selectedEmployeeId) => {
-    const employee = employees.find(emp => emp.id === selectedEmployeeId);
+    const employee = employees.find(emp => emp.employee_id === selectedEmployeeId);
     if (employee) {
       setFormData({
         ...formData,
@@ -204,7 +204,7 @@ export const Leaves = () => {
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-lg bg-white border-0 shadow-2xl">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 -m-6 mb-6">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6">
               <DialogHeader>
                 <DialogTitle className="text-xl font-bold text-white">
                   Apply for Leave
@@ -214,7 +214,7 @@ export const Leaves = () => {
                 </p>
               </DialogHeader>
             </div>
-            <form onSubmit={handleSubmit} className="space-y-6 px-6">
+            <form onSubmit={handleSubmit} className="space-y-6 p-6">
               {canApprove ? (
                 <div className="space-y-3">
                   <Label htmlFor="employee" className="text-sm font-semibold text-gray-700">Select Employee *</Label>
@@ -228,7 +228,7 @@ export const Leaves = () => {
                   >
                     <option value="">Select employee</option>
                     {employees.map((emp) => (
-                      <option key={emp.id} value={emp.id}>
+                      <option key={emp.employee_id} value={emp.employee_id}>
                         {emp.name} ({emp.employee_id})
                       </option>
                     ))}
