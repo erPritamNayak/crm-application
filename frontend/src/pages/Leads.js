@@ -559,9 +559,9 @@ export const Leads = () => {
                       {canEditLead(lead) && (
                         <>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="h-8 w-8"
+                            className="h-8 w-8 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedLead(lead);
@@ -583,9 +583,9 @@ export const Leads = () => {
                             <Edit2 className="h-4 w-4" />
                           </Button>
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="icon"
-                            className="h-8 w-8 text-red-600 hover:text-red-700"
+                            className="h-8 w-8 bg-red-50 border-red-200 text-red-600 hover:bg-red-100"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeleteLead(lead.id);

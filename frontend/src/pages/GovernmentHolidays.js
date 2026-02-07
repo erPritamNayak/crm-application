@@ -209,10 +209,10 @@ export const GovernmentHolidays = () => {
                     <span className="text-lg sm:text-xl font-bold leading-none text-blue-900">{day}</span>
                     <p className="text-[9px] sm:text-[10px] font-semibold text-blue-900 leading-tight text-center line-clamp-2 w-full px-0.5 mt-0.5">{h.name}</p>
                     {canManageHolidays && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute top-0.5 right-0.5 h-5 w-5 min-h-0 min-w-0 p-0 text-blue-600 hover:bg-blue-500/30 rounded"
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="absolute top-0.5 right-0.5 h-6 w-6 min-h-0 min-w-0 p-0 bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 rounded shadow-sm"
                         onClick={(e) => { e.stopPropagation(); handleDelete(h.id); }}
                         aria-label="Delete holiday"
                       >

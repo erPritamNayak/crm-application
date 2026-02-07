@@ -1141,14 +1141,23 @@ def get_attendance_summary(month: str, current_user: UserModel = Depends(get_cur
         for emp in employees
     }
 
-    # Government holidays in this month: exclude from absent count
+    # Government holidays and Sundays in this month: exclude from absent count
     month_start = f'{year}-{month_num:02d}-01'
     month_end = f'{year}-{month_num:02d}-{total_days:02d}'
-    holiday_count = db.query(GovernmentHolidayModel).filter(
-        GovernmentHolidayModel.date >= month_start,
-        GovernmentHolidayModel.date <= month_end
-    ).count()
-    working_days = max(0, total_days - holiday_count)
+    holiday_dates = set(
+        row.date for row in db.query(GovernmentHolidayModel).filter(
+            GovernmentHolidayModel.date >= month_start,
+            GovernmentHolidayModel.date <= month_end
+        ).all()
+    )
+    # Count Sundays
+    sundays = 0
+    for day in range(1, total_days + 1):
+        dt = datetime(year, month_num, day)
+        if dt.weekday() == 6:
+            sundays += 1
+    holiday_count = len(holiday_dates)
+    working_days = max(0, total_days - holiday_count - sundays)
 
     for record in records:
         data = summary_map.get(record.employee_id)
@@ -1260,6 +1269,7 @@ def get_attendance_report(
     while d <= end:
         date_str = d.strftime('%Y-%m-%d')
         is_holiday = date_str in holiday_dates
+        is_sunday = d.weekday() == 6
         for emp in employees:
             key = (date_str, emp.employee_id)
             rec = records_by_key.get(key)
@@ -1283,7 +1293,7 @@ def get_attendance_report(
                     'punch_in': None,
                     'punch_out': None,
                     'work_hours': 0,
-                    'status': 'Holiday' if is_holiday else 'Absent',
+                    'status': 'Holiday' if (is_holiday or is_sunday) else 'Absent',
                 })
         d += timedelta(days=1)
     report.sort(key=lambda x: (x['date'], x['employee_id']), reverse=True)

@@ -96,7 +96,7 @@ export const Layout = ({ children }) => {
           </div>
           <Button
             variant="ghost"
-            className="w-full justify-start text-red-600 hover:bg-red-50 font-medium text-sm h-10"
+            className="w-full justify-start bg-red-50 text-red-700 border-red-200 hover:bg-red-100 font-medium text-sm h-10"
             onClick={handleLogout}
             data-testid="logout-button"
           >
@@ -121,8 +121,8 @@ export const Layout = ({ children }) => {
                 alt="Company Logo" 
                 className="h-10 object-contain"
               />
-              <Button variant="ghost" size="icon" className="h-11 w-11 min-h-[44px] min-w-[44px]" onClick={() => setSidebarOpen(false)}>
-                <X className="h-5 w-5 text-gray-600" />
+              <Button variant="ghost" size="icon" className="h-11 w-11 min-h-[44px] min-w-[44px] bg-gray-200 border border-gray-300 text-gray-800 hover:bg-gray-300" onClick={() => setSidebarOpen(false)}>
+                <X className="h-5 w-5" />
               </Button>
             </div>
             
@@ -153,7 +153,7 @@ export const Layout = ({ children }) => {
               </div>
               <Button
                 variant="ghost"
-                className="w-full justify-start text-red-600 hover:bg-red-50 active:bg-red-100 font-medium text-sm min-h-[48px] px-4"
+                className="w-full justify-start bg-red-50 text-red-700 border-red-200 hover:bg-red-100 active:bg-red-200 font-medium text-sm min-h-[48px] px-4"
                 onClick={handleLogout}
               >
                 <LogOut className="h-4 w-4 mr-2 flex-shrink-0" />
@@ -171,7 +171,7 @@ export const Layout = ({ children }) => {
           <Button
             variant="ghost"
             size="icon"
-            className="lg:hidden mr-2 text-gray-600 h-11 w-11 min-h-[44px] min-w-[44px] flex-shrink-0"
+            className="lg:hidden mr-2 h-11 w-11 min-h-[44px] min-w-[44px] flex-shrink-0 bg-gray-200 border border-gray-300 text-gray-800 hover:bg-gray-300"
             onClick={() => setSidebarOpen(true)}
             data-testid="mobile-menu-button"
             aria-label="Open menu"
@@ -199,8 +199,8 @@ export const Layout = ({ children }) => {
               to={item.path}
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
-                `flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[56px] min-w-[56px] rounded-lg transition-colors text-xs ${
-                  isActive ? 'text-blue-600 font-medium' : 'text-gray-500'
+                `flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[56px] min-w-[56px] rounded-lg transition-colors text-xs bg-gray-100/80 border border-transparent ${
+                  isActive ? 'text-blue-600 font-medium bg-blue-50 border-blue-200' : 'text-gray-700'
                 }`
               }
             >
@@ -211,7 +211,7 @@ export const Layout = ({ children }) => {
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
-            className="flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[56px] min-w-[56px] rounded-lg transition-colors text-xs text-gray-500 hover:text-gray-700"
+            className="flex flex-col items-center justify-center gap-0.5 py-2 px-2 min-h-[56px] min-w-[56px] rounded-lg transition-colors text-xs bg-gray-100/80 text-gray-700 border border-gray-200 hover:bg-gray-200"
             aria-label="More menu"
           >
             <Menu className="h-6 w-6" />

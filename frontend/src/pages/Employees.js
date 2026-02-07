@@ -347,9 +347,9 @@ export const Employees = () => {
                       {user?.role === 'Admin' && (
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="outline"
                           size="icon"
-                          className="h-8 w-8 min-h-0 min-w-0 bg-gray-100 text-gray-600 hover:bg-blue-100 hover:text-blue-600 border border-gray-200"
+                          className="h-8 w-8 min-h-0 min-w-0 bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100 hover:text-blue-800 shadow-sm"
                           onClick={() => setVisibleSalaries((prev) => {
                             const next = new Set(prev);
                             if (next.has(employee.id)) next.delete(employee.id);
