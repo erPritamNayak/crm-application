@@ -9,8 +9,8 @@ from server import Base, UserModel, EmployeeModel
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-DATABASE_URL = "sqlite:///./glasshq.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = "postgresql://crm_user:StrongPassword123@localhost:5432/crm_db"
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def seed_data():

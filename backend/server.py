@@ -27,7 +27,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # Database Setup (SQLite or PostgreSQL)
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///./glasshq.db')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://crm_user:StrongPassword123@localhost:5432/crm_db')
 if DATABASE_URL.startswith('sqlite'):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
