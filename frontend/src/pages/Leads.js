@@ -42,6 +42,18 @@ const SOURCES = ['Website', 'Referral', 'Cold Call', 'Social Media', 'Partner', 
 const STATUSES = ['New', 'Contacted', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'];
 const ACTIVITY_TYPES = ['Call', 'Email', 'Meeting', 'Note'];
 
+const CATEGORY_OPTIONS = [
+  'Project',
+  'Automation',
+  'Instruments',
+  'Electrical &utility',
+  'Ion exchange',
+  'ssd',
+  'ion exchange chemical',
+  'cgw noc',
+  'cgwa flow metre',
+];
+
 const defaultLeadForm = {
   contact_name: '',
   company: '',
@@ -53,6 +65,11 @@ const defaultLeadForm = {
   notes: '',
   assigned_to_employee_id: '',
   assigned_to_name: '',
+  category: '',
+  sub_category: '',
+  contacts: [
+    { name: '', designation: '', email: '', number: '' }
+  ],
 };
 
 export const Leads = () => {
@@ -70,7 +87,7 @@ export const Leads = () => {
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState(null);
   const [activities, setActivities] = useState([]);
-  const [formData, setFormData] = useState(defaultLeadForm);
+  const [formData, setFormData] = useState({ ...defaultLeadForm });
   const [activityForm, setActivityForm] = useState({ activity_type: 'Note', summary: '' });
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
@@ -387,6 +404,85 @@ export const Leads = () => {
                   className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm resize-none"
                 />
               </div>
+              <div className="flex gap-2">
+                <Label className="text-sm font-semibold text-gray-700">Category</Label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
+                >
+                  <option value="">Select category</option>
+                  {CATEGORY_OPTIONS.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <Label className="text-sm font-semibold text-gray-700">Sub Category</Label>
+                <Input
+                  value={formData.sub_category}
+                  onChange={(e) => setFormData({ ...formData, sub_category: e.target.value })}
+                  placeholder="Enter sub category"
+                  className="flex-1"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-gray-700">Contacts</Label>
+                {formData.contacts.map((c, idx) => (
+                  <div key={idx} className="flex gap-2 mb-2 flex-wrap">
+                    <Input
+                      value={c.name}
+                      onChange={e => {
+                        const contacts = [...formData.contacts];
+                        contacts[idx].name = e.target.value;
+                        setFormData({ ...formData, contacts });
+                      }}
+                      placeholder="Name"
+                      className="border border-gray-300"
+                    />
+                    <Input
+                      value={c.designation}
+                      onChange={e => {
+                        const contacts = [...formData.contacts];
+                        contacts[idx].designation = e.target.value;
+                        setFormData({ ...formData, contacts });
+                      }}
+                      placeholder="Designation"
+                      className="border border-gray-300"
+                    />
+                    <Input
+                      value={c.email}
+                      onChange={e => {
+                        const contacts = [...formData.contacts];
+                        contacts[idx].email = e.target.value;
+                        setFormData({ ...formData, contacts });
+                      }}
+                      placeholder="Email"
+                      className="border border-gray-300"
+                    />
+                    <Input
+                      value={c.number}
+                      onChange={e => {
+                        const contacts = [...formData.contacts];
+                        contacts[idx].number = e.target.value;
+                        setFormData({ ...formData, contacts });
+                      }}
+                      placeholder="Number"
+                      className="border border-gray-300"
+                    />
+                    {formData.contacts.length > 1 && (
+                      <Button type="button" size="icon" variant="outline" className="h-9 w-9 text-red-600 border-red-200 hover:bg-red-100" onClick={() => {
+                        setFormData({ ...formData, contacts: formData.contacts.filter((_, i) => i !== idx) });
+                      }}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <Button type="button" size="sm" variant="outline" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setFormData({ ...formData, contacts: [...formData.contacts, { name: '', designation: '', email: '', number: '' }] })}>
+                  <Plus className="h-4 w-4 mr-1" /> Add Contact
+                </Button>
+              </div>
               <div className="flex justify-end gap-3 pt-2">
                 <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
                   Cancel
@@ -576,6 +672,9 @@ export const Leads = () => {
                                 notes: lead.notes || '',
                                 assigned_to_employee_id: lead.assigned_to_employee_id || '',
                                 assigned_to_name: lead.assigned_to_name || '',
+                                category: lead.category || '',
+                                sub_category: lead.sub_category || '',
+                                contacts: Array.isArray(lead.contacts) ? lead.contacts : (lead.contacts ? [lead.contacts] : [{ name: '', designation: '', email: '', number: '' }]),
                               });
                               setEditDialogOpen(true);
                             }}
@@ -666,6 +765,39 @@ export const Leads = () => {
                     <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedLead.notes}</p>
                   </div>
                 )}
+                {/* Category & Sub Category */}
+                {(selectedLead.category || selectedLead.sub_category) && (
+                  <div className="space-y-1">
+                    {selectedLead.category && (
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Category</p>
+                    )}
+                    {selectedLead.category && (
+                      <p className="text-sm text-gray-700">{selectedLead.category}</p>
+                    )}
+                    {selectedLead.sub_category && (
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Sub Category</p>
+                    )}
+                    {selectedLead.sub_category && (
+                      <p className="text-sm text-gray-700">{selectedLead.sub_category}</p>
+                    )}
+                  </div>
+                )}
+                {/* Contacts */}
+                {Array.isArray(selectedLead.contacts) && selectedLead.contacts.length > 0 && (
+                  <div className="space-y-1 mt-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Contacts</p>
+                    <div className="space-y-2">
+                      {selectedLead.contacts.map((c, idx) => (
+                        <div key={idx} className="flex flex-wrap gap-4 border border-gray-100 rounded p-2">
+                          {c.name && <span className="font-medium text-gray-800">{c.name}</span>}
+                          {c.designation && <span className="text-gray-600">{c.designation}</span>}
+                          {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 hover:underline">{c.email}</a>}
+                          {c.number && <a href={`tel:${c.number}`} className="text-gray-700">{c.number}</a>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {canEditLead(selectedLead) && (
                   <div className="flex gap-2 pt-2">
                     <Button
@@ -683,6 +815,9 @@ export const Leads = () => {
                           notes: selectedLead.notes || '',
                           assigned_to_employee_id: selectedLead.assigned_to_employee_id || '',
                           assigned_to_name: selectedLead.assigned_to_name || '',
+                          category: selectedLead.category || '',
+                          sub_category: selectedLead.sub_category || '',
+                          contacts: Array.isArray(selectedLead.contacts) ? selectedLead.contacts : (selectedLead.contacts ? [selectedLead.contacts] : [{ name: '', designation: '', email: '', number: '' }]),
                         });
                         setDetailSheetOpen(false);
                         setEditDialogOpen(true);
@@ -872,6 +1007,85 @@ export const Leads = () => {
                 rows={3}
                 className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm resize-none"
               />
+            </div>
+            <div className="flex gap-2">
+              <Label className="text-sm font-semibold text-gray-700">Category</Label>
+              <select
+                value={formData.category}
+                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
+              >
+                <option value="">Select category</option>
+                {CATEGORY_OPTIONS.map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <Label className="text-sm font-semibold text-gray-700">Sub Category</Label>
+              <Input
+                value={formData.sub_category}
+                onChange={(e) => setFormData({ ...formData, sub_category: e.target.value })}
+                placeholder="Enter sub category"
+                className="flex-1"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold text-gray-700">Contacts</Label>
+              {formData.contacts.map((c, idx) => (
+                <div key={idx} className="flex gap-2 mb-2 flex-wrap">
+                  <Input
+                    value={c.name}
+                    onChange={e => {
+                      const contacts = [...formData.contacts];
+                      contacts[idx].name = e.target.value;
+                      setFormData({ ...formData, contacts });
+                    }}
+                    placeholder="Name"
+                    className="border border-gray-300"
+                  />
+                  <Input
+                    value={c.designation}
+                    onChange={e => {
+                      const contacts = [...formData.contacts];
+                      contacts[idx].designation = e.target.value;
+                      setFormData({ ...formData, contacts });
+                    }}
+                    placeholder="Designation"
+                    className="border border-gray-300"
+                  />
+                  <Input
+                    value={c.email}
+                    onChange={e => {
+                      const contacts = [...formData.contacts];
+                      contacts[idx].email = e.target.value;
+                      setFormData({ ...formData, contacts });
+                    }}
+                    placeholder="Email"
+                    className="border border-gray-300"
+                  />
+                  <Input
+                    value={c.number}
+                    onChange={e => {
+                      const contacts = [...formData.contacts];
+                      contacts[idx].number = e.target.value;
+                      setFormData({ ...formData, contacts });
+                    }}
+                    placeholder="Number"
+                    className="border border-gray-300"
+                  />
+                  {formData.contacts.length > 1 && (
+                    <Button type="button" size="icon" variant="outline" className="h-9 w-9 text-red-600 border-red-200 hover:bg-red-100" onClick={() => {
+                      setFormData({ ...formData, contacts: formData.contacts.filter((_, i) => i !== idx) });
+                    }}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <Button type="button" size="sm" variant="outline" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setFormData({ ...formData, contacts: [...formData.contacts, { name: '', designation: '', email: '', number: '' }] })}>
+                <Plus className="h-4 w-4 mr-1" /> Add Contact
+              </Button>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>

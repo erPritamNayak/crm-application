@@ -192,6 +192,9 @@ class LeadModel(Base):
     assigned_to_name = Column(String, nullable=True)
     created_by_employee_id = Column(String, nullable=True, index=True)
     created_by_name = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+    sub_category = Column(String, nullable=True)
+    contacts = Column(String, nullable=True)  # JSON string: list of {name, designation, email, number}
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -245,6 +248,25 @@ def migrate_attendance_location_and_tour():
             pass
 
 migrate_attendance_location_and_tour()
+
+def migrate_leads_add_category_and_contacts():
+    """Add category, sub_category, and contacts columns to leads if missing (for new Leads UI)."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            r = conn.execute(text("PRAGMA table_info(leads)"))
+            cols = [row[1] for row in r.fetchall()]
+            if 'category' not in cols:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN category VARCHAR"))
+            if 'sub_category' not in cols:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN sub_category VARCHAR"))
+            if 'contacts' not in cols:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN contacts TEXT"))
+            conn.commit()
+        except Exception:
+            pass
+
+migrate_leads_add_category_and_contacts()
 
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
@@ -505,6 +527,9 @@ class Lead(BaseModel):
     assigned_to_name: Optional[str] = None
     created_by_employee_id: Optional[str] = None
     created_by_name: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
 
@@ -519,6 +544,9 @@ class LeadCreate(BaseModel):
     notes: Optional[str] = None
     assigned_to_employee_id: Optional[str] = None
     assigned_to_name: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
 
 class LeadUpdate(BaseModel):
     model_config = ConfigDict(extra='ignore')
@@ -532,6 +560,9 @@ class LeadUpdate(BaseModel):
     notes: Optional[str] = None
     assigned_to_employee_id: Optional[str] = None
     assigned_to_name: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
 
 class LeadActivity(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -624,7 +655,7 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     role_name = user_data.role.strip()
     if not db.query(RoleModel).filter(RoleModel.name == role_name).first():
         raise HTTPException(status_code=400, detail='Invalid role name.')
-    
+
     hashed_pw = hash_password(user_data.password)
     new_user = UserModel(
         email=user_data.email,
@@ -1939,7 +1970,15 @@ def get_leads(
         query = query.filter(LeadModel.source == source)
     if assigned_to_employee_id:
         query = query.filter(LeadModel.assigned_to_employee_id == assigned_to_employee_id)
-    return query.order_by(LeadModel.updated_at.desc()).all()
+    leads = query.order_by(LeadModel.updated_at.desc()).all()
+    # Deserialize contacts JSON for API response
+    for lead in leads:
+        if hasattr(lead, 'contacts') and lead.contacts:
+            try:
+                lead.contacts = json.loads(lead.contacts)
+            except Exception:
+                lead.contacts = []
+    return leads
 
 @api_router.get('/leads/stats', response_model=LeadStats)
 def get_lead_stats(
@@ -2039,11 +2078,20 @@ def create_lead(
         assigned_to_employee_id=data.assigned_to_employee_id,
         assigned_to_name=data.assigned_to_name,
         created_by_employee_id=current_user.employee_id,
-        created_by_name=current_user.name
+        created_by_name=current_user.name,
+        category=getattr(data, 'category', None),
+        sub_category=getattr(data, 'sub_category', None),
+        contacts=json.dumps(data.contacts) if getattr(data, 'contacts', None) is not None else None
     )
     db.add(new_lead)
     db.commit()
     db.refresh(new_lead)
+    # Deserialize contacts for response
+    if new_lead.contacts:
+        try:
+            new_lead.contacts = json.loads(new_lead.contacts)
+        except Exception:
+            new_lead.contacts = []
     return new_lead
 
 @api_router.get('/leads/{lead_id}', response_model=Lead)
@@ -2055,6 +2103,12 @@ def get_lead(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
+    # Deserialize contacts JSON for API response
+    if hasattr(lead, 'contacts') and lead.contacts:
+        try:
+            lead.contacts = json.loads(lead.contacts)
+        except Exception:
+            lead.contacts = []
     return lead
 
 @api_router.put('/leads/{lead_id}', response_model=Lead)
@@ -2069,11 +2123,21 @@ def update_lead(
         raise HTTPException(status_code=404, detail='Lead not found')
     if not can_edit_lead(lead, current_user):
         raise HTTPException(status_code=403, detail='You can only edit leads created by you')
-    for key, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    # Handle contacts as JSON string
+    if 'contacts' in update_data:
+        update_data['contacts'] = json.dumps(update_data['contacts']) if update_data['contacts'] is not None else None
+    for key, value in update_data.items():
         setattr(lead, key, value)
     lead.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(lead)
+    # Deserialize contacts for response
+    if lead.contacts:
+        try:
+            lead.contacts = json.loads(lead.contacts)
+        except Exception:
+            lead.contacts = []
     return lead
 
 @api_router.delete('/leads/{lead_id}')
