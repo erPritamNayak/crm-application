@@ -48,14 +48,15 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://crm-resoline-bucket.s3-website.ap-south-1.amazonaws.com",
-        "https://crm-resoline-bucket.s3-website.ap-south-1.amazonaws.com",
-        "http://crm.resoline.in",
-        "https://crm.resoline.in",
-        "http://localhost:3000",
-        "https://localhost:3000"
-    ],
+    # allow_origins=[
+    #     "http://crm-resoline-bucket.s3-website.ap-south-1.amazonaws.com",
+    #     "https://crm-resoline-bucket.s3-website.ap-south-1.amazonaws.com",
+    #     "http://crm.resoline.in",
+    #     "https://crm.resoline.in",
+    #     "http://localhost:3000",
+    #     "https://localhost:3000"
+    # ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
