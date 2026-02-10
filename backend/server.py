@@ -60,8 +60,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer()
+
+# Register API router with FastAPI app
+app.include_router(api_router)
 
 # ============= DATABASE MODELS =============
 
