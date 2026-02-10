@@ -48,7 +48,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Or ["http://localhost:3000"] for more security
+    allow_origins=["http://crm.resoline.in", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
