@@ -22,12 +22,15 @@ from reportlab.pdfgen import canvas
 import io
 import uuid
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # Database Setup (SQLite or PostgreSQL)
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://crm_user:StrongPassword123@localhost:5432/crm_db')
+DATABASE_URL = 'sqlite:///./crm_db.sqlite3'
 if DATABASE_URL.startswith('sqlite'):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
@@ -225,6 +228,8 @@ class LeadModel(Base):
     category = Column(String, nullable=True)
     sub_category = Column(String, nullable=True)
     contacts = Column(String, nullable=True)  # JSON string: list of {name, designation, email, number}
+    negotiation_price = Column(Float, nullable=True)  # Price during negotiation phase
+    negotiation_terms = Column(String, nullable=True)  # Terms and conditions during negotiation
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -236,6 +241,106 @@ class LeadActivityModel(Base):
     summary = Column(String)
     created_by_id = Column(String, nullable=True)
     created_by_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+class LeadStatusHistoryModel(Base):
+    __tablename__ = "lead_status_history"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String, index=True)
+    old_status = Column(String)
+    new_status = Column(String)
+    changed_by_employee_id = Column(String, nullable=True, index=True)
+    changed_by_name = Column(String, nullable=True)
+    change_comment = Column(String, nullable=True)
+    changed_at = Column(DateTime, default=datetime.now, index=True)
+
+class LeadReminderModel(Base):
+    __tablename__ = "lead_reminders"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String, index=True)
+    reminder_datetime = Column(DateTime, nullable=False, index=True)
+    description = Column(String, nullable=False)
+    is_completed = Column(String, default='False')
+    created_by_id = Column(String, nullable=True)
+    created_by_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+class OrderModel(Base):
+    __tablename__ = "orders"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id = Column(String, unique=True, index=True)  # Unique order number
+    lead_id = Column(String, index=True)  # Link to the won lead
+    customer_name = Column(String, index=True)
+    contact_person = Column(String, nullable=True)
+    contact_number = Column(String, nullable=True)
+    mail_id = Column(String, nullable=True)
+    offer_no = Column(String, nullable=True)
+    offer_date = Column(DateTime, nullable=True)
+    product = Column(String, nullable=True)
+    cust_supply_po_value = Column(Float, nullable=True)
+    cust_po_no = Column(String, nullable=True)
+    po_date = Column(DateTime, nullable=True)
+    order_copy_received_date = Column(DateTime, nullable=True)
+    payment_terms = Column(String, nullable=True)
+    advance_payment = Column(Float, nullable=True)
+    delivery_committed = Column(DateTime, nullable=True)
+    vendor_po_no = Column(String, nullable=True)
+    vendor_name = Column(String, nullable=True)
+    vendor_po_date = Column(DateTime, nullable=True)
+    vendor_po_value = Column(Float, nullable=True)
+    resoline_tax_invoice_no = Column(String, nullable=True)
+    resoline_invoice_date = Column(DateTime, nullable=True)
+    invoice_amount = Column(Float, nullable=True)
+    vendor_invoice_no = Column(String, nullable=True)
+    vendor_dispatch_lr_no = Column(String, nullable=True)
+    vendor_dispatch_transport = Column(String, nullable=True)
+    material_check = Column(String, nullable=True)  # Status
+    customer_dispatch_details = Column(String, nullable=True)
+    material_received_by_cust = Column(DateTime, nullable=True)
+    installation_successful = Column(String, default='Pending')  # Pending/Completed
+    installation_service_report_no = Column(String, nullable=True)
+    service_report_date = Column(DateTime, nullable=True)
+    service_charges = Column(Float, nullable=True)
+    final_payment_due = Column(Float, nullable=True)
+    final_payment_date = Column(DateTime, nullable=True)
+    subscription_start_date = Column(DateTime, nullable=True)
+    subscription_end_date = Column(DateTime, nullable=True)
+    subscription_status = Column(String, default='Active')  # Active/Expiring Soon/Expired
+    renewal_reminder_sent = Column(String, default='False')
+    remarks = Column(String, nullable=True)  # REMARK/STATUS
+    order_status = Column(String, default='Open')  # Open/In Progress/Completed/Cancelled
+    offer_copy_path = Column(String, nullable=True)  # Path to uploaded offer copy
+    order_copy_path = Column(String, nullable=True)  # Path to uploaded order copy
+    estimation = Column(Float, nullable=True)  # Estimation value (similar to story points)
+    subscription_reminder_sent_30 = Column(String, default='False')  # 30 days before
+    subscription_reminder_sent_7 = Column(String, default='False')  # 7 days before
+    subscription_reminder_sent_1 = Column(String, default='False')  # 1 day before
+    assigned_to_employee_id = Column(String, nullable=True, index=True)
+    assigned_to_name = Column(String, nullable=True)
+    created_by_employee_id = Column(String, nullable=True)
+    created_by_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class OrderActivityModel(Base):
+    __tablename__ = "order_activities"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id = Column(String, index=True)  # Link to Order
+    activity_type = Column(String)  # Update/Status Change/Renewal Reminder/Note
+    summary = Column(String)
+    details = Column(String, nullable=True)  # JSON for additional details
+    created_by_id = Column(String, nullable=True)
+    created_by_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+class SubscriptionReminderModel(Base):
+    __tablename__ = "subscription_reminders"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id = Column(String, index=True)
+    reminder_date = Column(DateTime, nullable=False)
+    reminder_type = Column(String)  # 30days_before/7days_before/on_expiry
+    is_sent = Column(String, default='False')
+    sent_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
 # Create all tables
@@ -296,7 +401,62 @@ def migrate_leads_add_category_and_contacts():
         except Exception:
             pass
 
+def migrate_leads_add_negotiation_fields():
+    """Add negotiation_price and negotiation_terms columns to leads if missing."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            r = conn.execute(text("PRAGMA table_info(leads)"))
+            cols = [row[1] for row in r.fetchall()]
+            if 'negotiation_price' not in cols:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN negotiation_price FLOAT"))
+            if 'negotiation_terms' not in cols:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN negotiation_terms TEXT"))
+            conn.commit()
+        except Exception:
+            pass
+
+def migrate_orders_add_attachments_and_estimation():
+    """Add offer_copy_path, order_copy_path, estimation and subscription reminder tracking columns to orders if missing."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            r = conn.execute(text("PRAGMA table_info(orders)"))
+            cols = [row[1] for row in r.fetchall()]
+            if 'offer_copy_path' not in cols:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN offer_copy_path VARCHAR"))
+            if 'order_copy_path' not in cols:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN order_copy_path VARCHAR"))
+            if 'estimation' not in cols:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN estimation FLOAT"))
+            if 'subscription_reminder_sent_30' not in cols:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN subscription_reminder_sent_30 VARCHAR DEFAULT 'False'"))
+            if 'subscription_reminder_sent_7' not in cols:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN subscription_reminder_sent_7 VARCHAR DEFAULT 'False'"))
+            if 'subscription_reminder_sent_1' not in cols:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN subscription_reminder_sent_1 VARCHAR DEFAULT 'False'"))
+            conn.commit()
+        except Exception:
+            pass
+
+migrate_leads_add_negotiation_fields()
+migrate_orders_add_attachments_and_estimation()
+
 migrate_leads_add_category_and_contacts()
+
+def migrate_lead_status_history():
+    """Create lead_status_history table if missing."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            r = conn.execute(text("PRAGMA table_info(lead_status_history)"))
+            # Table exists, no need to create
+            r.fetchall()
+        except Exception:
+            # Table doesn't exist, it will be created by Base.metadata.create_all()
+            pass
+
+migrate_lead_status_history()
 
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
@@ -560,6 +720,8 @@ class Lead(BaseModel):
     category: Optional[str] = None
     sub_category: Optional[str] = None
     contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
+    negotiation_price: Optional[float] = None  # Price during negotiation phase
+    negotiation_terms: Optional[str] = None  # Terms and conditions during negotiation
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
 
@@ -593,6 +755,9 @@ class LeadUpdate(BaseModel):
     category: Optional[str] = None
     sub_category: Optional[str] = None
     contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
+    negotiation_price: Optional[float] = None  # Price during negotiation phase
+    negotiation_terms: Optional[str] = None  # Terms and conditions during negotiation
+    status_change_comment: Optional[str] = None  # Comment when status changes (required if status is changing)
 
 class LeadActivity(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -608,9 +773,196 @@ class LeadActivityCreate(BaseModel):
     activity_type: Literal['Call', 'Email', 'Meeting', 'Note'] = 'Note'
     summary: str
 
+class LeadStatusHistory(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    lead_id: str
+    old_status: str
+    new_status: str
+    changed_by_employee_id: Optional[str] = None
+    changed_by_name: Optional[str] = None
+    change_comment: Optional[str] = None
+    changed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class LeadStatusHistoryCreate(BaseModel):
+    old_status: str
+    new_status: str
+    change_comment: str
+
+class LeadReminder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    lead_id: str
+    reminder_datetime: datetime
+    description: str
+    is_completed: str = 'False'
+    created_by_id: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class LeadReminderCreate(BaseModel):
+    reminder_datetime: datetime
+    description: str
+
 class LeadStats(BaseModel):
     total: int
     by_status: dict
+
+class Order(BaseModel):
+    id: str
+    order_id: str
+    lead_id: str
+    customer_name: str
+    contact_person: Optional[str] = None
+    contact_number: Optional[str] = None
+    mail_id: Optional[str] = None
+    offer_no: Optional[str] = None
+    offer_date: Optional[datetime] = None
+    product: Optional[str] = None
+    cust_supply_po_value: Optional[float] = None
+    cust_po_no: Optional[str] = None
+    po_date: Optional[datetime] = None
+    order_copy_received_date: Optional[datetime] = None
+    payment_terms: Optional[str] = None
+    advance_payment: Optional[float] = None
+    delivery_committed: Optional[datetime] = None
+    vendor_po_no: Optional[str] = None
+    vendor_name: Optional[str] = None
+    vendor_po_date: Optional[datetime] = None
+    vendor_po_value: Optional[float] = None
+    resoline_tax_invoice_no: Optional[str] = None
+    resoline_invoice_date: Optional[datetime] = None
+    invoice_amount: Optional[float] = None
+    vendor_invoice_no: Optional[str] = None
+    vendor_dispatch_lr_no: Optional[str] = None
+    vendor_dispatch_transport: Optional[str] = None
+    material_check: Optional[str] = None
+    customer_dispatch_details: Optional[str] = None
+    material_received_by_cust: Optional[datetime] = None
+    installation_successful: str = 'Pending'
+    installation_service_report_no: Optional[str] = None
+    service_report_date: Optional[datetime] = None
+    service_charges: Optional[float] = None
+    final_payment_due: Optional[float] = None
+    final_payment_date: Optional[datetime] = None
+    subscription_start_date: Optional[datetime] = None
+    subscription_end_date: Optional[datetime] = None
+    subscription_status: str = 'Active'
+    renewal_reminder_sent: str = 'False'
+    remarks: Optional[str] = None
+    order_status: str = 'Open'
+    offer_copy_path: Optional[str] = None
+    order_copy_path: Optional[str] = None
+    estimation: Optional[float] = None
+    subscription_reminder_sent_30: str = 'False'
+    subscription_reminder_sent_7: str = 'False'
+    subscription_reminder_sent_1: str = 'False'
+    assigned_to_employee_id: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+    created_by_employee_id: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class OrderCreate(BaseModel):
+    lead_id: str
+    customer_name: str
+    contact_person: Optional[str] = None
+    contact_number: Optional[str] = None
+    mail_id: Optional[str] = None
+    offer_no: Optional[str] = None
+    offer_date: Optional[datetime] = None
+    product: Optional[str] = None
+    cust_supply_po_value: Optional[float] = None
+    cust_po_no: Optional[str] = None
+    po_date: Optional[datetime] = None
+    offer_copy_path: Optional[str] = None
+    order_copy_path: Optional[str] = None
+    estimation: Optional[float] = None
+    subscription_start_date: Optional[datetime] = None
+    subscription_end_date: Optional[datetime] = None
+    assigned_to_employee_id: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+
+class OrderUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    contact_number: Optional[str] = None
+    mail_id: Optional[str] = None
+    offer_no: Optional[str] = None
+    offer_date: Optional[datetime] = None
+    product: Optional[str] = None
+    cust_supply_po_value: Optional[float] = None
+    cust_po_no: Optional[str] = None
+    po_date: Optional[datetime] = None
+    offer_copy_path: Optional[str] = None
+    order_copy_path: Optional[str] = None
+    estimation: Optional[float] = None
+    order_copy_received_date: Optional[datetime] = None
+    payment_terms: Optional[str] = None
+    advance_payment: Optional[float] = None
+    delivery_committed: Optional[datetime] = None
+    vendor_po_no: Optional[str] = None
+    vendor_name: Optional[str] = None
+    vendor_po_date: Optional[datetime] = None
+    vendor_po_value: Optional[float] = None
+    resoline_tax_invoice_no: Optional[str] = None
+    resoline_invoice_date: Optional[datetime] = None
+    invoice_amount: Optional[float] = None
+    vendor_invoice_no: Optional[str] = None
+    vendor_dispatch_lr_no: Optional[str] = None
+    vendor_dispatch_transport: Optional[str] = None
+    material_check: Optional[str] = None
+    customer_dispatch_details: Optional[str] = None
+    material_received_by_cust: Optional[datetime] = None
+    installation_successful: Optional[str] = None
+    installation_service_report_no: Optional[str] = None
+    service_report_date: Optional[datetime] = None
+    service_charges: Optional[float] = None
+    final_payment_due: Optional[float] = None
+    final_payment_date: Optional[datetime] = None
+    subscription_start_date: Optional[datetime] = None
+    subscription_end_date: Optional[datetime] = None
+    subscription_reminder_sent_30: Optional[str] = None
+    subscription_reminder_sent_7: Optional[str] = None
+    subscription_reminder_sent_1: Optional[str] = None
+    order_status: Optional[str] = None
+    remarks: Optional[str] = None
+    assigned_to_employee_id: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+
+class OrderActivity(BaseModel):
+    id: str
+    order_id: str
+    activity_type: str
+    summary: str
+    details: Optional[str] = None
+    created_by_id: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class OrderActivityCreate(BaseModel):
+    order_id: str
+    activity_type: str
+    summary: str
+    details: Optional[str] = None
+
+class SubscriptionReminder(BaseModel):
+    id: str
+    order_id: str
+    reminder_date: datetime
+    reminder_type: str
+    is_sent: str
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 class DashboardStats(BaseModel):
     total_employees: int
@@ -2153,13 +2505,41 @@ def update_lead(
         raise HTTPException(status_code=404, detail='Lead not found')
     if not can_edit_lead(lead, current_user):
         raise HTTPException(status_code=403, detail='You can only edit leads created by you')
+    
     update_data = data.model_dump(exclude_unset=True)
+    
+    # Track if status is being changed
+    old_status = lead.status
+    new_status = update_data.get('status')
+    status_changed = new_status is not None and new_status != old_status
+    
+    # Require comment if status is being changed
+    if status_changed and not update_data.get('status_change_comment'):
+        raise HTTPException(status_code=400, detail='Status change comment is required')
+    
     # Handle contacts as JSON string
     if 'contacts' in update_data:
         update_data['contacts'] = json.dumps(update_data['contacts']) if update_data['contacts'] is not None else None
+    
+    # Remove status_change_comment from update_data (it's not a column on LeadModel)
+    status_comment = update_data.pop('status_change_comment', None)
+    
     for key, value in update_data.items():
         setattr(lead, key, value)
     lead.updated_at = datetime.now(timezone.utc)
+    
+    # Create status history record if status changed
+    if status_changed:
+        history = LeadStatusHistoryModel(
+            lead_id=lead_id,
+            old_status=old_status,
+            new_status=new_status,
+            changed_by_employee_id=current_user.employee_id,
+            changed_by_name=current_user.name,
+            change_comment=status_comment
+        )
+        db.add(history)
+    
     db.commit()
     db.refresh(lead)
     # Deserialize contacts for response
@@ -2217,6 +2597,597 @@ def add_lead_activity(
     db.commit()
     db.refresh(activity)
     return activity
+
+@api_router.get('/leads/{lead_id}/status-history', response_model=List[LeadStatusHistory])
+def get_lead_status_history(
+    lead_id: str,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Get all status change history for a lead, ordered by most recent first."""
+    return db.query(LeadStatusHistoryModel).filter(
+        LeadStatusHistoryModel.lead_id == lead_id
+    ).order_by(LeadStatusHistoryModel.changed_at.desc()).all()
+
+@api_router.get('/leads/{lead_id}/reminders', response_model=List[LeadReminder])
+def get_lead_reminders(
+    lead_id: str,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Get all reminders for a lead, ordered by reminder date."""
+    return db.query(LeadReminderModel).filter(LeadReminderModel.lead_id == lead_id).order_by(LeadReminderModel.reminder_datetime.asc()).all()
+
+@api_router.post('/leads/{lead_id}/reminders', response_model=LeadReminder)
+def add_lead_reminder(
+    lead_id: str,
+    data: LeadReminderCreate,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Create a reminder for a lead."""
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail='Lead not found')
+    if not can_edit_lead(lead, current_user):
+        raise HTTPException(status_code=403, detail='You can only add reminders to leads created by you')
+    
+    reminder = LeadReminderModel(
+        lead_id=lead_id,
+        reminder_datetime=data.reminder_datetime,
+        description=data.description,
+        is_completed='False',
+        created_by_id=current_user.id,
+        created_by_name=current_user.name
+    )
+    db.add(reminder)
+    db.commit()
+    db.refresh(reminder)
+    return reminder
+
+@api_router.delete('/leads/{lead_id}/reminders/{reminder_id}')
+def delete_lead_reminder(
+    lead_id: str,
+    reminder_id: str,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Delete a reminder for a lead."""
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail='Lead not found')
+    if not can_edit_lead(lead, current_user):
+        raise HTTPException(status_code=403, detail='You can only delete reminders from leads created by you')
+    
+    reminder = db.query(LeadReminderModel).filter(
+        LeadReminderModel.id == reminder_id,
+        LeadReminderModel.lead_id == lead_id
+    ).first()
+    if not reminder:
+        raise HTTPException(status_code=404, detail='Reminder not found')
+    
+    db.delete(reminder)
+    db.commit()
+    return {'message': 'Reminder deleted'}
+
+# ============= EMAIL HELPER FUNCTIONS =============
+
+def send_email(to_email: str, subject: str, body: str, is_html: bool = False) -> bool:
+    """Send an email using SMTP configuration from environment variables."""
+    try:
+        smtp_server = os.environ.get('SMTP_SERVER', '')
+        smtp_port = int(os.environ.get('SMTP_PORT', 587))
+        smtp_username = os.environ.get('SMTP_USERNAME', '')
+        smtp_password = os.environ.get('SMTP_PASSWORD', '')
+        sender_email = os.environ.get('SENDER_EMAIL', '')
+        sender_name = os.environ.get('SENDER_NAME', 'CRM Application')
+        
+        # Check if email configuration is properly set
+        if not all([smtp_server, smtp_username, smtp_password, sender_email]):
+            missing_configs = []
+            if not smtp_server:
+                missing_configs.append('SMTP_SERVER')
+            if not smtp_username:
+                missing_configs.append('SMTP_USERNAME')
+            if not smtp_password:
+                missing_configs.append('SMTP_PASSWORD')
+            if not sender_email:
+                missing_configs.append('SENDER_EMAIL')
+            error_msg = f'Email configuration not properly set. Missing: {", ".join(missing_configs)}'
+            logging.warning(error_msg)
+            return False
+        
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = f'{sender_name} <{sender_email}>'
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        # Add body
+        if is_html:
+            part = MIMEText(body, 'html')
+        else:
+            part = MIMEText(body, 'plain')
+        msg.attach(part)
+        
+        # Send email
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.send_message(msg)
+        
+        logging.info(f'Email sent successfully to {to_email}')
+        return True
+    except smtplib.SMTPAuthenticationError as e:
+        logging.error(f'SMTP Authentication Failed: Check SMTP_USERNAME and SMTP_PASSWORD in .env file. Error: {str(e)}')
+        return False
+    except smtplib.SMTPException as e:
+        logging.error(f'SMTP Error while sending email to {to_email}: {str(e)}')
+        return False
+    except Exception as e:
+        logging.error(f'Failed to send email to {to_email}: {str(e)}')
+        return False
+
+def calculate_subscription_status(subscription_end_date: Optional[datetime]) -> str:
+    """Calculate subscription status based on end date."""
+    if not subscription_end_date:
+        return 'Active'
+    
+    today = datetime.now()
+    days_until_expiry = (subscription_end_date.date() - today.date()).days
+    
+    if days_until_expiry <= 0:
+        return 'Expired'
+    elif days_until_expiry <= 60:
+        return 'Expiring Soon'
+    else:
+        return 'Active'
+
+# ============= EMAIL TEST ENDPOINT =============
+
+class TestEmailRequest(BaseModel):
+    recipient_email: EmailStr
+
+@api_router.post('/test-email')
+def test_email(
+    request: TestEmailRequest,
+    current_user: UserModel = Depends(get_current_user)
+):
+    """Test email configuration by sending a test email."""
+    test_subject = "CRM Application - Email Configuration Test"
+    test_body = f"""
+Hello {current_user.name},
+
+This is a test email from the CRM Application to verify your email configuration is working correctly.
+
+If you received this email, your SMTP settings are configured properly!
+
+Test Details:
+- Sent by: {current_user.email}
+- Recipient: {request.recipient_email}
+- Timestamp: {datetime.now().isoformat()}
+
+Best regards,
+CRM Application Team
+"""
+    
+    email_sent = send_email(request.recipient_email, test_subject, test_body, is_html=False)
+    
+    if email_sent:
+        return {
+            'status': 'success',
+            'message': f'Test email sent successfully to {request.recipient_email}',
+            'recipient': request.recipient_email
+        }
+    else:
+        return {
+            'status': 'failed',
+            'message': f'Failed to send test email. Please check .env file configuration and server logs.',
+            'recipient': request.recipient_email,
+            'help': 'Make sure SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, and SENDER_EMAIL are properly set in .env file'
+        }
+
+# ============= ORDER ROUTES =============
+
+def _enrich_order_with_lead_info(order: OrderModel, db: Session) -> dict:
+    """Helper function to merge order with current lead contact information and calculate subscription status."""
+    # Calculate subscription status dynamically
+    subscription_status = calculate_subscription_status(order.subscription_end_date)
+    
+    order_dict = {
+        'id': order.id,
+        'order_id': order.order_id,
+        'lead_id': order.lead_id,
+        'customer_name': order.customer_name,
+        'contact_person': order.contact_person,
+        'contact_number': order.contact_number,
+        'mail_id': order.mail_id,
+        'offer_no': order.offer_no,
+        'offer_date': order.offer_date,
+        'product': order.product,
+        'cust_supply_po_value': order.cust_supply_po_value,
+        'cust_po_no': order.cust_po_no,
+        'po_date': order.po_date,
+        'order_copy_received_date': order.order_copy_received_date,
+        'payment_terms': order.payment_terms,
+        'advance_payment': order.advance_payment,
+        'delivery_committed': order.delivery_committed,
+        'vendor_po_no': order.vendor_po_no,
+        'vendor_name': order.vendor_name,
+        'vendor_po_date': order.vendor_po_date,
+        'vendor_po_value': order.vendor_po_value,
+        'resoline_tax_invoice_no': order.resoline_tax_invoice_no,
+        'resoline_invoice_date': order.resoline_invoice_date,
+        'invoice_amount': order.invoice_amount,
+        'vendor_invoice_no': order.vendor_invoice_no,
+        'vendor_dispatch_lr_no': order.vendor_dispatch_lr_no,
+        'vendor_dispatch_transport': order.vendor_dispatch_transport,
+        'material_check': order.material_check,
+        'customer_dispatch_details': order.customer_dispatch_details,
+        'material_received_by_cust': order.material_received_by_cust,
+        'installation_successful': order.installation_successful,
+        'installation_service_report_no': order.installation_service_report_no,
+        'service_report_date': order.service_report_date,
+        'service_charges': order.service_charges,
+        'final_payment_due': order.final_payment_due,
+        'final_payment_date': order.final_payment_date,
+        'subscription_start_date': order.subscription_start_date,
+        'subscription_end_date': order.subscription_end_date,
+        'subscription_status': subscription_status,  # Dynamically calculated
+        'renewal_reminder_sent': order.renewal_reminder_sent,
+        'remarks': order.remarks,
+        'order_status': order.order_status,
+        'offer_copy_path': order.offer_copy_path,
+        'order_copy_path': order.order_copy_path,
+        'estimation': order.estimation,
+        'subscription_reminder_sent_30': order.subscription_reminder_sent_30,
+        'subscription_reminder_sent_7': order.subscription_reminder_sent_7,
+        'subscription_reminder_sent_1': order.subscription_reminder_sent_1,
+        'assigned_to_employee_id': order.assigned_to_employee_id,
+        'assigned_to_name': order.assigned_to_name,
+        'created_by_employee_id': order.created_by_employee_id,
+        'created_by_name': order.created_by_name,
+        'created_at': order.created_at,
+        'updated_at': order.updated_at,
+    }
+    
+    # Fetch current lead info and override contact fields with lead's current data
+    if order.lead_id:
+        lead = db.query(LeadModel).filter(LeadModel.id == order.lead_id).first()
+        if lead:
+            order_dict['contact_person'] = lead.contact_name
+            order_dict['contact_number'] = lead.phone
+            order_dict['mail_id'] = lead.email
+    
+    return order_dict
+
+@api_router.get('/orders', response_model=List[Order])
+def get_orders(
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    status: Optional[str] = None,
+    lead_id: Optional[str] = None
+):
+    """Get all orders with optional filtering."""
+    query = db.query(OrderModel)
+    
+    if status:
+        query = query.filter(OrderModel.order_status == status)
+    if lead_id:
+        query = query.filter(OrderModel.lead_id == lead_id)
+    
+    orders = query.order_by(OrderModel.created_at.desc()).all()
+    # Enrich each order with current lead contact information
+    enriched_orders = [_enrich_order_with_lead_info(order, db) for order in orders]
+    return enriched_orders
+
+@api_router.get('/orders/search/expiring', response_model=List[Order])
+def get_expiring_subscriptions(
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    days: int = 30
+):
+    """Get orders with subscriptions expiring within specified days."""
+    from datetime import timedelta
+    future_date = datetime.now() + timedelta(days=days)
+    
+    orders = db.query(OrderModel).filter(
+        OrderModel.subscription_status != 'Expired',
+        OrderModel.subscription_end_date <= future_date,
+        OrderModel.subscription_end_date >= datetime.now()
+    ).all()
+    # Enrich each order with current lead contact information
+    enriched_orders = [_enrich_order_with_lead_info(order, db) for order in orders]
+    return enriched_orders
+
+@api_router.post('/orders', response_model=Order)
+def create_order(
+    order_data: OrderCreate,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Create a new order from a won lead."""
+    # Verify the lead exists and is won
+    lead = db.query(LeadModel).filter(LeadModel.id == order_data.lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail='Lead not found')
+    if lead.status != 'Won':
+        raise HTTPException(status_code=400, detail='Order can only be created for Won leads')
+    
+    # Generate unique order ID
+    order_number = f"ORD-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
+    
+    # Auto-populate contact info from lead if not provided
+    contact_person = order_data.contact_person or lead.contact_name
+    contact_number = order_data.contact_number or lead.phone
+    mail_id = order_data.mail_id or lead.email
+    
+    new_order = OrderModel(
+        order_id=order_number,
+        lead_id=order_data.lead_id,
+        customer_name=order_data.customer_name,
+        contact_person=contact_person,
+        contact_number=contact_number,
+        mail_id=mail_id,
+        offer_no=order_data.offer_no,
+        offer_date=order_data.offer_date,
+        product=order_data.product,
+        cust_supply_po_value=order_data.cust_supply_po_value,
+        cust_po_no=order_data.cust_po_no,
+        po_date=order_data.po_date,
+        offer_copy_path=order_data.offer_copy_path,
+        order_copy_path=order_data.order_copy_path,
+        estimation=order_data.estimation,
+        subscription_start_date=order_data.subscription_start_date,
+        subscription_end_date=order_data.subscription_end_date,
+        assigned_to_employee_id=order_data.assigned_to_employee_id or current_user.employee_id,
+        assigned_to_name=order_data.assigned_to_name or current_user.name,
+        created_by_employee_id=current_user.employee_id,
+        created_by_name=current_user.name
+    )
+    
+    # Calculate subscription status if subscription end date is provided
+    if order_data.subscription_end_date:
+        new_order.subscription_status = calculate_subscription_status(order_data.subscription_end_date)
+    
+    db.add(new_order)
+    db.commit()
+    db.refresh(new_order)
+    
+    # Create activity log
+    activity = OrderActivityModel(
+        order_id=new_order.id,
+        activity_type='Order Creation',
+        summary=f'Order {order_number} created',
+        created_by_id=current_user.id,
+        created_by_name=current_user.name
+    )
+    db.add(activity)
+    db.commit()
+    
+    # Return enriched order with current lead contact information
+    enriched_order = _enrich_order_with_lead_info(new_order, db)
+    return enriched_order
+
+@api_router.get('/orders/{order_id}', response_model=Order)
+def get_order(
+    order_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific order by ID."""
+    order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail='Order not found')
+    # Enrich order with current lead contact information
+    enriched_order = _enrich_order_with_lead_info(order, db)
+    return enriched_order
+
+@api_router.put('/orders/{order_id}', response_model=Order)
+def update_order(
+    order_id: str,
+    order_data: OrderUpdate,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Update an order."""
+    order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail='Order not found')
+    
+    # Update the fields that were provided
+    update_data = order_data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(order, field, value)
+    
+    order.updated_at = datetime.now()
+    
+    # Check subscription status
+    if order.subscription_end_date:
+        today = datetime.now()
+        days_until_expiry = (order.subscription_end_date.date() - today.date()).days
+        
+        if days_until_expiry <= 0:
+            order.subscription_status = 'Expired'
+        elif days_until_expiry <= 30:
+            order.subscription_status = 'Expiring Soon'
+        else:
+            order.subscription_status = 'Active'
+    
+    db.commit()
+    db.refresh(order)
+    
+    # Create activity log
+    activity = OrderActivityModel(
+        order_id=order.id,
+        activity_type='Order Update',
+        summary='Order information updated',
+        created_by_id=current_user.id,
+        created_by_name=current_user.name
+    )
+    db.add(activity)
+    db.commit()
+    
+    # Return enriched order with current lead contact information
+    enriched_order = _enrich_order_with_lead_info(order, db)
+    return enriched_order
+
+@api_router.get('/orders/{order_id}/activities', response_model=List[OrderActivity])
+def get_order_activities(
+    order_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all activities for an order."""
+    activities = db.query(OrderActivityModel).filter(
+        OrderActivityModel.order_id == order_id
+    ).order_by(OrderActivityModel.created_at.desc()).all()
+    return activities
+
+@api_router.post('/orders/{order_id}/activities', response_model=OrderActivity)
+def add_order_activity(
+    order_id: str,
+    activity_data: OrderActivityCreate,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Add an activity to an order."""
+    order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail='Order not found')
+    
+    new_activity = OrderActivityModel(
+        order_id=order_id,
+        activity_type=activity_data.activity_type,
+        summary=activity_data.summary,
+        details=activity_data.details,
+        created_by_id=current_user.id,
+        created_by_name=current_user.name
+    )
+    
+    db.add(new_activity)
+    db.commit()
+    db.refresh(new_activity)
+    return new_activity
+
+@api_router.post('/orders/{order_id}/send-renewal-reminder')
+def send_renewal_reminder(
+    order_id: str,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Send a renewal reminder for an order subscription."""
+    order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail='Order not found')
+    
+    if not order.subscription_end_date:
+        raise HTTPException(status_code=400, detail='Order has no subscription end date')
+    
+    # Create activity log for renewal reminder
+    activity = OrderActivityModel(
+        order_id=order_id,
+        activity_type='Renewal Reminder',
+        summary=f'Subscription renewal reminder sent to {order.customer_name}',
+        created_by_id=current_user.id,
+        created_by_name=current_user.name
+    )
+    
+    order.renewal_reminder_sent = 'True'
+    
+    db.add(activity)
+    db.commit()
+    
+    return {'message': 'Renewal reminder sent successfully', 'order_id': order_id}
+
+@api_router.post('/orders/{order_id}/send-subscription-reminder')
+def send_subscription_reminder(
+    order_id: str,
+    reminder_data: dict,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db)
+):
+    """Send a subscription renewal reminder email with specified days before expiry."""
+    order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail='Order not found')
+    
+    if not order.subscription_end_date:
+        raise HTTPException(status_code=400, detail='Order has no subscription end date')
+    
+    days_before = reminder_data.get('days_before', 30)
+    email = reminder_data.get('email')
+    contact_name = reminder_data.get('contact_name', 'Customer')
+    end_date = reminder_data.get('end_date')
+    
+    if not email:
+        raise HTTPException(status_code=400, detail='Email is required')
+    
+    # Format the email body
+    end_date_obj = datetime.fromisoformat(end_date.split('T')[0]) if isinstance(end_date, str) else order.subscription_end_date
+    email_body = f"""
+Dear {contact_name},
+
+This is a friendly reminder that your subscription for Order {order.order_id} will expire in {days_before} days.
+
+Subscription Details:
+- Order ID: {order.order_id}
+- End Date: {end_date_obj.strftime('%Y-%m-%d')}
+- Customer: {order.customer_name}
+
+Please contact our support team if you'd like to renew your subscription.
+
+Best regards,
+Sales Team
+"""
+    
+    # Log the reminder activity
+    activity = OrderActivityModel(
+        order_id=order_id,
+        activity_type='Subscription Reminder',
+        summary=f'{days_before}-day subscription renewal reminder sent to {email}',
+        details=json.dumps({
+            'email': email,
+            'days_before': days_before,
+            'sent_at': datetime.now().isoformat()
+        }),
+        created_by_id=current_user.id,
+        created_by_name=current_user.name
+    )
+    
+    # Update the appropriate reminder_sent flag
+    if days_before == 30:
+        order.subscription_reminder_sent_30 = 'True'
+    elif days_before == 7:
+        order.subscription_reminder_sent_7 = 'True'
+    elif days_before == 1:
+        order.subscription_reminder_sent_1 = 'True'
+    
+    db.add(activity)
+    db.commit()
+    db.refresh(order)
+    
+    # Send the email
+    subject = f"Subscription Renewal Reminder - Order {order.order_id}"
+    email_sent = send_email(email, subject, email_body, is_html=False)
+    
+    if email_sent:
+        return {
+            'message': f'Subscription reminder email sent successfully to {email}',
+            'order_id': order_id,
+            'days_before': days_before,
+            'email': email,
+            'status': 'sent'
+        }
+    else:
+        return {
+            'message': f'Failed to send subscription reminder email to {email}. Please check email configuration.',
+            'order_id': order_id,
+            'days_before': days_before,
+            'email': email,
+            'status': 'failed'
+        }
+
 
 # ============= PAYROLL ROUTES =============
 

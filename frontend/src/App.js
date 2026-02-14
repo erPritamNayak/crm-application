@@ -20,6 +20,7 @@ import { Roles } from '@/pages/Roles';
 import { Workspace } from '@/pages/Workspace';
 import { Leads } from '@/pages/Leads';
 import { GovernmentHolidays } from '@/pages/GovernmentHolidays';
+import Inventory from '@/pages/Inventory';
 
 function App() {
   return (
@@ -47,6 +48,17 @@ function App() {
                 <ProtectedRoute allowedRoles={['Admin', 'Manager', 'Sales']}>
                   <Layout>
                     <Leads />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            
+            <Route
+              path="/inventory"
+              element={
+                <ProtectedRoute allowedRoles={['Admin', 'Manager', 'Sales']}>
+                  <Layout>
+                    <Inventory />
                   </Layout>
                 </ProtectedRoute>
               }

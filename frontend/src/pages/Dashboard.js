@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Card } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
-import { Target, TrendingUp, TrendingDown, CheckCircle, XCircle, Clock, User, DollarSign } from 'lucide-react';
+import { Target, TrendingUp, TrendingDown, CheckCircle, XCircle, Clock, User, DollarSign, AlertCircle, Package } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { toast } from 'sonner';
 
@@ -22,6 +22,7 @@ const STATUS_COLORS = {
 export const Dashboard = () => {
   const { user } = useAuth();
   const [leadReport, setLeadReport] = useState(null);
+  const [expiringSubscriptions, setExpiringSubscriptions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const canSeeLeads = ['Admin', 'HR', 'Manager'].includes(user?.role);
@@ -29,6 +30,7 @@ export const Dashboard = () => {
   useEffect(() => {
     if (canSeeLeads) {
       fetchLeadReport();
+      fetchExpiringSubscriptions();
     } else {
       setLoading(false);
     }
@@ -44,6 +46,17 @@ export const Dashboard = () => {
       toast.error('Failed to load lead report');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchExpiringSubscriptions = async () => {
+    try {
+      const response = await axios.get(`${API}/orders/search/expiring?days=30`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      setExpiringSubscriptions(response.data || []);
+    } catch (err) {
+      console.error('Failed to load expiring subscriptions');
     }
   };
 
@@ -123,6 +136,47 @@ export const Dashboard = () => {
               </p>
             </Card>
           </div>
+
+          {/* Expiring Subscriptions Alert */}
+          {expiringSubscriptions.length > 0 && (
+            <Card className="p-4 sm:p-6 rounded-lg border-2 border-yellow-200 bg-yellow-50 shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="p-3 rounded-lg bg-yellow-100">
+                  <AlertCircle className="h-6 w-6 text-yellow-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base sm:text-lg font-semibold text-yellow-900 mb-2">
+                    Subscriptions Expiring Soon
+                  </h3>
+                  <p className="text-sm text-yellow-800 mb-3">
+                    {expiringSubscriptions.length} customer subscription{expiringSubscriptions.length !== 1 ? 's' : ''} will expire within 30 days.
+                    Consider reaching out to renew their service agreements.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {expiringSubscriptions.slice(0, 5).map((order) => (
+                      <div key={order.id} className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                        <div className="font-medium">{order.customer_name}</div>
+                        <div className="text-yellow-700">
+                          {new Date(order.subscription_end_date).toLocaleDateString()}
+                        </div>
+                      </div>
+                    ))}
+                    {expiringSubscriptions.length > 5 && (
+                      <div className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-medium">
+                        +{expiringSubscriptions.length - 5} more
+                      </div>
+                    )}
+                  </div>
+                  <a
+                    href="/inventory"
+                    className="inline-block mt-3 text-xs font-semibold text-yellow-700 hover:text-yellow-800 underline"
+                  >
+                    View all in Inventory →
+                  </a>
+                </div>
+              </div>
+            </Card>
+          )}
 
           {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">

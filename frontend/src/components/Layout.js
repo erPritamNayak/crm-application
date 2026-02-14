@@ -17,7 +17,8 @@ import {
   Receipt,
   Shield,
   Briefcase,
-  Target
+  Target,
+  Package
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -34,6 +35,7 @@ export const Layout = ({ children }) => {
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', permission: 'dashboard', roles: ['Admin'] },
     { icon: Target, label: 'Leads', path: '/leads', permission: 'leads', roles: ['Admin', 'Manager', 'Sales'] },
+    { icon: Package, label: 'Inventory', path: '/inventory', permission: 'leads', roles: ['Admin', 'Manager', 'Sales'] },
     { icon: Users, label: 'Employees', path: '/employees', permission: 'employees', roles: ['Admin', 'HR', 'Manager'] },
     { icon: Calendar, label: 'Attendance', path: '/attendance', permission: 'attendance', roles: ['Admin', 'HR', 'Manager', 'Employee'] },
     { icon: FileText, label: 'Leaves', path: '/leaves', permission: 'leaves', roles: ['Admin', 'HR', 'Manager', 'Employee'] },
