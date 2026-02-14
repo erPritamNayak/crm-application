@@ -9,8 +9,12 @@ from server import Base, UserModel, EmployeeModel
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-DATABASE_URL = "postgresql://crm_user:StrongPassword123@localhost:5432/crm_db"
-engine = create_engine(DATABASE_URL)
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///./crm_db.sqlite3')
+if DATABASE_URL.startswith('sqlite'):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    # PostgreSQL or other databases
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def seed_data():
@@ -21,21 +25,21 @@ def seed_data():
     
     try:
         # Check if admin exists
-        existing_admin = db.query(UserModel).filter(UserModel.email == 'admin@glasshq.com').first()
+        existing_admin = db.query(UserModel).filter(UserModel.email == 'admin@resoline.in').first()
         
         if not existing_admin:
             # Create admin user
             hashed_pw = bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             admin_user = UserModel(
                 id='admin-001',
-                email='admin@glasshq.com',
+                email='admin@resoline.in',
                 password=hashed_pw,
                 name='Admin User',
                 role='Admin'
             )
             db.add(admin_user)
             db.commit()
-            print('✓ Admin user created: admin@glasshq.com / admin123')
+            print('✓ Admin user created: admin@resoline.in / admin123')
         else:
             print('✓ Admin user already exists')
         
