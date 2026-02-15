@@ -1017,6 +1017,18 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail='Invalid token')
 
+# ============= HEALTH CHECK ROUTES =============
+
+@api_router.get('/db-check')
+def db_check():
+    """Check database connectivity"""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            return {"db": "connected", "status": "ok"}
+    except Exception as e:
+        return {"db": "disconnected", "status": "error", "message": str(e)}
+
 # ============= AUTH ROUTES =============
 
 @api_router.post('/auth/register')
