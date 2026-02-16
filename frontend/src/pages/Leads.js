@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +18,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import {
@@ -82,6 +84,7 @@ const defaultLeadForm = {
 
 export const Leads = () => {
   const { user } = useAuth();
+  const location = useLocation();
   const [leads, setLeads] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [stats, setStats] = useState({ total: 0, by_status: {} });
@@ -113,6 +116,20 @@ export const Leads = () => {
   const [detailTab, setDetailTab] = useState('overview'); // 'overview', 'activity', 'reminders'
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef(null);
+  const [showOrderDialog, setShowOrderDialog] = useState(false);
+  const [wonLead, setWonLead] = useState(null);
+  const [orderForm, setOrderForm] = useState({
+    customer_name: '',
+    contact_person: '',
+    contact_number: '',
+    mail_id: '',
+    offer_no: '',
+    offer_date: '',
+    product: '',
+    cust_po_no: '',
+    po_date: '',
+    estimation: '',
+  });
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
@@ -150,6 +167,34 @@ export const Leads = () => {
       setNotificationQueue(notificationQueue.slice(1));
     }
   }, [currentNotification, notificationQueue]);
+
+  // Handle opening lead when navigated from Inventory
+  useEffect(() => {
+    if (location.state?.highlightLeadId && leads.length > 0) {
+      const leadToOpen = leads.find(lead => lead.id === location.state.highlightLeadId);
+      if (leadToOpen) {
+        setSelectedLead(leadToOpen);
+        setDetailSheetOpen(true);
+        // Fetch activities and other details
+        fetchLeadDetails(leadToOpen.id);
+      }
+    }
+  }, [location.state?.highlightLeadId, leads]);
+
+  const fetchLeadDetails = async (leadId) => {
+    try {
+      const [activitiesRes, historyRes, remindersRes] = await Promise.all([
+        axios.get(`${API}/leads/${leadId}/activities`, { headers: authHeader() }),
+        axios.get(`${API}/leads/${leadId}/status-history`, { headers: authHeader() }),
+        axios.get(`${API}/leads/${leadId}/reminders`, { headers: authHeader() }),
+      ]);
+      setActivities(activitiesRes.data);
+      setStatusHistory(historyRes.data);
+      setReminders(remindersRes.data);
+    } catch (err) {
+      console.error('Failed to fetch lead details:', err);
+    }
+  };
 
   const fetchLeads = async () => {
     try {
@@ -367,6 +412,25 @@ export const Leads = () => {
       setLostAmount('');
       setDraggedLead(null);
       
+      // If status changed to "Won", show order creation dialog
+      if (pendingStatusChange.newStatus === 'Won') {
+        const updatedLead = data;
+        setWonLead(updatedLead);
+        setOrderForm({
+          customer_name: updatedLead.company || '',
+          contact_person: updatedLead.contact_name || '',
+          contact_number: updatedLead.phone || '',
+          mail_id: updatedLead.email || '',
+          offer_no: '',
+          offer_date: '',
+          product: updatedLead.category || '',
+          cust_po_no: '',
+          po_date: '',
+          estimation: updatedLead.value || '',
+        });
+        setShowOrderDialog(true);
+      }
+      
       fetchLeads();
       fetchStats();
       
@@ -400,6 +464,59 @@ export const Leads = () => {
       fetchStats();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Failed to delete');
+    }
+  };
+
+  const handleCreateOrder = async (e) => {
+    e?.preventDefault();
+    if (!wonLead) {
+      toast.error('No lead selected');
+      return;
+    }
+    try {
+      const payload = {
+        lead_id: wonLead.id,
+        ...orderForm,
+        estimation: orderForm.estimation ? parseFloat(orderForm.estimation) : null,
+      };
+      
+      await axios.post(`${API}/orders`, payload, { headers: authHeader() });
+      toast.success('Order created successfully!');
+      setShowOrderDialog(false);
+      setWonLead(null);
+      setOrderForm({
+        customer_name: '',
+        contact_person: '',
+        contact_number: '',
+        mail_id: '',
+        offer_no: '',
+        offer_date: '',
+        product: '',
+        cust_po_no: '',
+        po_date: '',
+        estimation: '',
+      });
+      fetchLeads();
+    } catch (err) {
+      // Handle Pydantic validation errors (array of error objects)
+      let errorMsg = 'Failed to create order';
+      
+      if (err.response?.data?.detail) {
+        // If detail is an array of error objects (Pydantic validation)
+        if (Array.isArray(err.response.data.detail)) {
+          errorMsg = err.response.data.detail
+            .map(e => e.msg || JSON.stringify(e))
+            .join(', ');
+        } else if (typeof err.response.data.detail === 'string') {
+          errorMsg = err.response.data.detail;
+        } else if (typeof err.response.data.detail === 'object') {
+          errorMsg = err.response.data.detail.msg || JSON.stringify(err.response.data.detail);
+        }
+      } else if (err.response?.data?.message) {
+        errorMsg = err.response.data.message;
+      }
+      
+      toast.error(errorMsg);
     }
   };
 
@@ -1256,232 +1373,245 @@ export const Leads = () => {
                   {selectedLead.contact_name}
                 </SheetTitle>
               </SheetHeader>
-              <div className="mt-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-gray-600">{selectedLead.company}</p>
-                  <span className="px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700">
-                    {selectedLead.status}
-                  </span>
-                </div>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-gray-500" />
-                    <a href={`mailto:${selectedLead.email}`} className="text-blue-600 hover:underline">
-                      {selectedLead.email}
-                    </a>
+              
+              {/* Tab Navigation */}
+              <Tabs defaultValue="details" className="w-full mt-6">
+                <TabsList className="grid w-full grid-cols-4 gap-0 mb-4 bg-blue-50 border border-blue-200 rounded-lg p-0.5">
+                  <TabsTrigger value="details" className="text-xs font-medium px-2 py-2 text-gray-600 hover:text-gray-800 data-[state=active]:bg-blue-100 data-[state=active]:text-gray-700 data-[state=active]:font-semibold rounded">Details</TabsTrigger>
+                  <TabsTrigger value="contacts" className="text-xs font-medium px-2 py-2 text-gray-600 hover:text-gray-800 data-[state=active]:bg-blue-100 data-[state=active]:text-gray-700 data-[state=active]:font-semibold rounded">Contacts</TabsTrigger>
+                  <TabsTrigger value="activities" className="text-xs font-medium px-2 py-2 text-gray-600 hover:text-gray-800 data-[state=active]:bg-blue-100 data-[state=active]:text-gray-700 data-[state=active]:font-semibold rounded">Activities</TabsTrigger>
+                  <TabsTrigger value="reminders" className="text-xs font-medium px-2 py-2 text-gray-600 hover:text-gray-800 data-[state=active]:bg-blue-100 data-[state=active]:text-gray-700 data-[state=active]:font-semibold rounded">Reminders</TabsTrigger>
+                </TabsList>
+
+                {/* Details Tab */}
+                <TabsContent value="details" className="space-y-4 mt-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-gray-600">{selectedLead.company}</p>
+                    <span className="px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700">
+                      {selectedLead.status}
+                    </span>
                   </div>
-                  {selectedLead.phone && (
+                  <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4 text-gray-500" />
-                      <a href={`tel:${selectedLead.phone}`} className="text-gray-700">
-                        {selectedLead.phone}
+                      <Mail className="h-4 w-4 text-gray-500" />
+                      <a href={`mailto:${selectedLead.email}`} className="text-blue-600 hover:underline">
+                        {selectedLead.email}
                       </a>
                     </div>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4 text-gray-500" />
-                    <span className="text-gray-700">{selectedLead.source}</span>
-                  </div>
-                  {selectedLead.value != null && selectedLead.value > 0 && (
+                    {selectedLead.phone && (
+                      <div className="flex items-center gap-2">
+                        <Phone className="h-4 w-4 text-gray-500" />
+                        <a href={`tel:${selectedLead.phone}`} className="text-gray-700">
+                          {selectedLead.phone}
+                        </a>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
-                      <IndianRupee className="h-4 w-4 text-gray-500" />
-                      <span className="font-medium">₹{Number(selectedLead.value).toLocaleString('en-IN')}</span>
+                      <Building2 className="h-4 w-4 text-gray-500" />
+                      <span className="text-gray-700">{selectedLead.source}</span>
+                    </div>
+                    {selectedLead.value != null && selectedLead.value > 0 && (
+                      <div className="flex items-center gap-2">
+                        <IndianRupee className="h-4 w-4 text-gray-500" />
+                        <span className="font-medium">₹{Number(selectedLead.value).toLocaleString('en-IN')}</span>
+                      </div>
+                    )}
+                    {selectedLead.assigned_to_name && (
+                      <p className="text-gray-600">Assigned to: {selectedLead.assigned_to_name}</p>
+                    )}
+                    {selectedLead.created_by_name && (
+                      <p className="text-gray-600">Created by: {selectedLead.created_by_name}</p>
+                    )}
+                  </div>
+                  {selectedLead.notes && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Notes</p>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedLead.notes}</p>
                     </div>
                   )}
-                  {selectedLead.assigned_to_name && (
-                    <p className="text-gray-600">Assigned to: {selectedLead.assigned_to_name}</p>
+                  {(selectedLead.category || selectedLead.sub_category) && (
+                    <div className="space-y-1">
+                      {selectedLead.category && (
+                        <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Category</p>
+                      )}
+                      {selectedLead.category && (
+                        <p className="text-sm text-gray-700">{selectedLead.category}</p>
+                      )}
+                      {selectedLead.sub_category && (
+                        <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Sub Category</p>
+                      )}
+                      {selectedLead.sub_category && (
+                        <p className="text-sm text-gray-700">{selectedLead.sub_category}</p>
+                      )}
+                    </div>
                   )}
-                  {selectedLead.created_by_name && (
-                    <p className="text-gray-600">Created by: {selectedLead.created_by_name}</p>
+                  {canEditLead(selectedLead) && (
+                    <div className="flex gap-2 pt-4 border-t border-gray-200">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setFormData({
+                            contact_name: selectedLead.contact_name,
+                            company: selectedLead.company,
+                            email: selectedLead.email,
+                            phone: selectedLead.phone || '',
+                            source: selectedLead.source,
+                            status: selectedLead.status,
+                            value: selectedLead.value ?? '',
+                            notes: selectedLead.notes || '',
+                            assigned_to_employee_id: selectedLead.assigned_to_employee_id || '',
+                            assigned_to_name: selectedLead.assigned_to_name || '',
+                            category: selectedLead.category || '',
+                            sub_category: selectedLead.sub_category || '',
+                            contacts: Array.isArray(selectedLead.contacts) ? selectedLead.contacts : (selectedLead.contacts ? [selectedLead.contacts] : [{ name: '', designation: '', email: '', number: '' }]),
+                          });
+                          setDetailSheetOpen(false);
+                          setEditDialogOpen(true);
+                        }}
+                      >
+                        <Edit2 className="h-4 w-4 mr-1" />
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={() => handleDeleteLead(selectedLead.id)}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Delete
+                      </Button>
+                    </div>
                   )}
-                </div>
-                {selectedLead.notes && (
-                  <div>
-                    <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Notes</p>
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedLead.notes}</p>
-                  </div>
-                )}
-                {(selectedLead.category || selectedLead.sub_category) && (
-                  <div className="space-y-1">
-                    {selectedLead.category && (
-                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Category</p>
-                    )}
-                    {selectedLead.category && (
-                      <p className="text-sm text-gray-700">{selectedLead.category}</p>
-                    )}
-                    {selectedLead.sub_category && (
-                      <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Sub Category</p>
-                    )}
-                    {selectedLead.sub_category && (
-                      <p className="text-sm text-gray-700">{selectedLead.sub_category}</p>
-                    )}
-                  </div>
-                )}
-                {Array.isArray(selectedLead.contacts) && selectedLead.contacts.length > 0 && (
-                  <div className="space-y-1 mt-2">
-                    <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Contacts</p>
+                </TabsContent>
+
+                {/* Contacts Tab */}
+                <TabsContent value="contacts" className="space-y-4 mt-4">
+                  {Array.isArray(selectedLead.contacts) && selectedLead.contacts.length > 0 ? (
                     <div className="space-y-2">
                       {selectedLead.contacts.map((c, idx) => (
-                        <div key={idx} className="flex flex-wrap gap-4 border border-gray-100 rounded p-2">
-                          {c.name && <span className="font-medium text-gray-800">{c.name}</span>}
-                          {c.designation && <span className="text-gray-600">{c.designation}</span>}
-                          {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 hover:underline">{c.email}</a>}
-                          {c.number && <a href={`tel:${c.number}`} className="text-gray-700">{c.number}</a>}
+                        <div key={idx} className="border border-gray-100 rounded-lg p-3 space-y-2">
+                          {c.name && <p className="font-medium text-gray-800">{c.name}</p>}
+                          {c.designation && <p className="text-sm text-gray-600">{c.designation}</p>}
+                          {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 hover:underline text-sm">{c.email}</a>}
+                          {c.number && <a href={`tel:${c.number}`} className="text-gray-700 text-sm">{c.number}</a>}
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-                {canEditLead(selectedLead) && (
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setFormData({
-                          contact_name: selectedLead.contact_name,
-                          company: selectedLead.company,
-                          email: selectedLead.email,
-                          phone: selectedLead.phone || '',
-                          source: selectedLead.source,
-                          status: selectedLead.status,
-                          value: selectedLead.value ?? '',
-                          notes: selectedLead.notes || '',
-                          assigned_to_employee_id: selectedLead.assigned_to_employee_id || '',
-                          assigned_to_name: selectedLead.assigned_to_name || '',
-                          category: selectedLead.category || '',
-                          sub_category: selectedLead.sub_category || '',
-                          contacts: Array.isArray(selectedLead.contacts) ? selectedLead.contacts : (selectedLead.contacts ? [selectedLead.contacts] : [{ name: '', designation: '', email: '', number: '' }]),
-                        });
-                        setDetailSheetOpen(false);
-                        setEditDialogOpen(true);
-                      }}
-                    >
-                      <Edit2 className="h-4 w-4 mr-1" />
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-red-600 hover:text-red-700"
-                      onClick={() => handleDeleteLead(selectedLead.id)}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Delete
-                    </Button>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-sm text-gray-500">No contacts available.</p>
+                  )}
+                </TabsContent>
 
-                <hr className="border-gray-200" />
-
-                {/* Status Change History */}
-                {statusHistory.length > 0 && (
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800 flex items-center gap-1 mb-3">
-                      <Clock className="h-4 w-4" />
-                      Status Change History
-                    </p>
-                    <div className="space-y-3 max-h-64 overflow-y-auto">
-                      {statusHistory.map((history) => (
-                        <div key={history.id} className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
-                              {history.old_status}
-                            </span>
-                            <ArrowRight className="h-3 w-3 text-gray-400" />
-                            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                              {history.new_status}
-                            </span>
+                {/* Activities Tab */}
+                <TabsContent value="activities" className="space-y-4 mt-4">
+                  {/* Status Change History */}
+                  {statusHistory.length > 0 && (
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-1">
+                        <History className="h-4 w-4" />
+                        Status Changes
+                      </p>
+                      <div className="space-y-3 max-h-64 overflow-y-auto">
+                        {statusHistory.map((history) => (
+                          <div key={history.id} className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                                {history.old_status}
+                              </span>
+                              <ArrowRight className="h-3 w-3 text-gray-400" />
+                              <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                {history.new_status}
+                              </span>
+                            </div>
+                            {history.change_comment && (
+                              <p className="text-gray-700 mb-2 italic">"{history.change_comment}"</p>
+                            )}
+                            <p className="text-xs text-gray-600">
+                              {history.changed_by_name} • {new Date(history.changed_at).toLocaleString()}
+                            </p>
                           </div>
-                          {history.change_comment && (
-                            <p className="text-gray-700 mb-2 italic">"{history.change_comment}"</p>
-                          )}
-                          <p className="text-xs text-gray-600">
-                            {history.changed_by_name} • {new Date(history.changed_at).toLocaleString()}
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Activity Log */}
+                  <div className="pt-4 border-t border-gray-200">
+                    <p className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-1">
+                      <Activity className="h-4 w-4" />
+                      Activity Log
+                    </p>
+                    {canEditLead(selectedLead) && (
+                      <form onSubmit={handleAddActivity} className="flex gap-2 mb-4">
+                        <select
+                          value={activityForm.activity_type}
+                          onChange={(e) => setActivityForm({ ...activityForm, activity_type: e.target.value })}
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
+                        >
+                          {ACTIVITY_TYPES.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                        <Input
+                          value={activityForm.summary}
+                          onChange={(e) => setActivityForm({ ...activityForm, summary: e.target.value })}
+                          placeholder="Add activity..."
+                          className="flex-1 text-sm"
+                        />
+                        <Button type="submit" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+                          Add
+                        </Button>
+                      </form>
+                    )}
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {activities.map((act) => (
+                        <div
+                          key={act.id}
+                          className="rounded-lg border border-gray-100 bg-gray-50 p-2 text-sm"
+                        >
+                          <span className="font-medium text-blue-600">{act.activity_type}</span>
+                          <p className="text-gray-700 mt-0.5">{act.summary}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {act.created_by_name} • {new Date(act.created_at).toLocaleString()}
                           </p>
                         </div>
                       ))}
+                      {activities.length === 0 && (
+                        <p className="text-sm text-gray-500">No activities yet.</p>
+                      )}
                     </div>
                   </div>
-                )}
+                </TabsContent>
 
-                <hr className="border-gray-200" />
-
-                <div>
-                  <p className="text-sm font-semibold text-gray-800 flex items-center gap-1 mb-2">
-                    <Activity className="h-4 w-4" />
-                    Activity
-                  </p>
-                  {canEditLead(selectedLead) && (
-                    <form onSubmit={handleAddActivity} className="flex gap-2 mb-4">
-                      <select
-                        value={activityForm.activity_type}
-                        onChange={(e) => setActivityForm({ ...activityForm, activity_type: e.target.value })}
-                        className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white"
-                      >
-                        {ACTIVITY_TYPES.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
-                      <Input
-                        value={activityForm.summary}
-                        onChange={(e) => setActivityForm({ ...activityForm, summary: e.target.value })}
-                        placeholder="Add activity..."
-                        className="flex-1"
-                      />
-                      <Button type="submit" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
-                        Add
-                      </Button>
-                    </form>
-                  )}
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {activities.map((act) => (
-                      <div
-                        key={act.id}
-                        className="rounded-lg border border-gray-100 bg-gray-50 p-2 text-sm"
-                      >
-                        <span className="font-medium text-blue-600">{act.activity_type}</span>
-                        <p className="text-gray-700 mt-0.5">{act.summary}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {act.created_by_name} • {new Date(act.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                    ))}
-                    {activities.length === 0 && (
-                      <p className="text-sm text-gray-500">No activities yet.</p>
-                    )}
-                  </div>
-                </div>
-
-                <hr className="border-gray-200" />
-
-                {/* Reminders Section */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
+                {/* Reminders Tab */}
+                <TabsContent value="reminders" className="space-y-4 mt-4">
+                  <div className="flex items-center justify-between mb-4">
                     <p className="text-sm font-semibold text-gray-800 flex items-center gap-1">
-                      <Clock className="h-4 w-4" />
+                      <Bell className="h-4 w-4" />
                       Reminders & Follow-ups
                     </p>
                     {canEditLead(selectedLead) && (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="text-blue-600 border-blue-200 hover:bg-blue-50 h-8"
+                        className="text-blue-600 border-blue-200 hover:bg-blue-50 h-8 text-xs"
                         onClick={() => setShowReminderForm(!showReminderForm)}
                       >
                         <Plus className="h-3 w-3 mr-1" />
-                        Set Reminder
+                        {showReminderForm ? 'Hide' : 'Set'}
                       </Button>
                     )}
                   </div>
 
-                  {showReminderForm && canEditLead(selectedLead) && (
+                  {showReminderForm && (
                     <form onSubmit={handleAddReminder} className="space-y-3 mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <Label htmlFor="reminder-date" className="text-xs font-semibold text-gray-700">Date</Label>
+                          <Label htmlFor="reminder-date-input" className="text-xs font-semibold text-gray-700">Date</Label>
                           <Input
-                            id="reminder-date"
+                            id="reminder-date-input"
                             type="date"
                             value={reminderForm.reminder_date}
                             onChange={(e) => setReminderForm({ ...reminderForm, reminder_date: e.target.value })}
@@ -1490,9 +1620,9 @@ export const Leads = () => {
                           />
                         </div>
                         <div className="space-y-1">
-                          <Label htmlFor="reminder-time" className="text-xs font-semibold text-gray-700">Time</Label>
+                          <Label htmlFor="reminder-time-input" className="text-xs font-semibold text-gray-700">Time</Label>
                           <Input
-                            id="reminder-time"
+                            id="reminder-time-input"
                             type="time"
                             value={reminderForm.reminder_time}
                             onChange={(e) => setReminderForm({ ...reminderForm, reminder_time: e.target.value })}
@@ -1502,10 +1632,10 @@ export const Leads = () => {
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <Label htmlFor="reminder-desc" className="text-xs font-semibold text-gray-700">Reminder Description</Label>
+                        <Label htmlFor="reminder-desc-input" className="text-xs font-semibold text-gray-700">Description</Label>
                         <Input
-                          id="reminder-desc"
-                          placeholder="e.g., Call client at 5 PM, Follow up on proposal..."
+                          id="reminder-desc-input"
+                          placeholder="e.g., Follow up on proposal..."
                           value={reminderForm.description}
                           onChange={(e) => setReminderForm({ ...reminderForm, description: e.target.value })}
                           required
@@ -1575,11 +1705,11 @@ export const Leads = () => {
                         );
                       })
                     ) : (
-                      <p className="text-sm text-gray-500">No reminders set. Click "Set Reminder" to create one.</p>
+                      <p className="text-sm text-gray-500">No reminders set.</p>
                     )}
                   </div>
-                </div>
-              </div>
+                </TabsContent>
+              </Tabs>
             </>
           )}
         </SheetContent>
@@ -1790,6 +1920,120 @@ export const Leads = () => {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Order Creation Dialog for Won Leads */}
+      <Dialog open={showOrderDialog} onOpenChange={setShowOrderDialog}>
+        <DialogContent className="max-w-lg bg-white rounded-lg border border-gray-200 shadow-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="border-b border-gray-200 pb-4">
+            <DialogTitle className="text-base font-semibold text-gray-900">Create Order for Won Lead</DialogTitle>
+          </DialogHeader>
+          {wonLead && (
+            <form onSubmit={handleCreateOrder} className="space-y-4 p-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-blue-900">
+                  <strong>Lead:</strong> {wonLead.contact_name} from {wonLead.company}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Customer Name *</Label>
+                  <Input
+                    value={orderForm.customer_name}
+                    onChange={(e) => setOrderForm({ ...orderForm, customer_name: e.target.value })}
+                    required
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Contact Person</Label>
+                  <Input
+                    value={orderForm.contact_person}
+                    onChange={(e) => setOrderForm({ ...orderForm, contact_person: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Contact Number</Label>
+                  <Input
+                    value={orderForm.contact_number}
+                    onChange={(e) => setOrderForm({ ...orderForm, contact_number: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Email</Label>
+                  <Input
+                    value={orderForm.mail_id}
+                    onChange={(e) => setOrderForm({ ...orderForm, mail_id: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Offer No.</Label>
+                  <Input
+                    value={orderForm.offer_no}
+                    onChange={(e) => setOrderForm({ ...orderForm, offer_no: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Offer Date</Label>
+                  <Input
+                    type="date"
+                    value={orderForm.offer_date}
+                    onChange={(e) => setOrderForm({ ...orderForm, offer_date: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Product</Label>
+                  <Input
+                    value={orderForm.product}
+                    onChange={(e) => setOrderForm({ ...orderForm, product: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">PO No.</Label>
+                  <Input
+                    value={orderForm.cust_po_no}
+                    onChange={(e) => setOrderForm({ ...orderForm, cust_po_no: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">PO Date</Label>
+                  <Input
+                    type="date"
+                    value={orderForm.po_date}
+                    onChange={(e) => setOrderForm({ ...orderForm, po_date: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700">Estimation (₹)</Label>
+                  <Input
+                    type="number"
+                    value={orderForm.estimation}
+                    onChange={(e) => setOrderForm({ ...orderForm, estimation: e.target.value })}
+                    className="mt-1 border border-gray-300 rounded h-9"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-gray-200">
+                <Button type="button" variant="outline" className="text-gray-700 border-gray-300 hover:bg-gray-50" onClick={() => { setShowOrderDialog(false); setWonLead(null); }}>
+                  Skip
+                </Button>
+                <Button type="submit" className="bg-green-600 hover:bg-green-700 text-white">
+                  Create Order
+                </Button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>
