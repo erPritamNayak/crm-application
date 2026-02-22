@@ -5,9 +5,8 @@
  * Provides consistent API endpoint across all components
  */
 
-// Hardcoded backend URL for local development
-// TODO: Change this before deployment
-const BACKEND_URL = 'http://localhost:8000';
+// Get backend URL from environment variable or use production endpoint
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://api.resoline.com';
 
 // API endpoint for auth and general API calls
 export const API_ENDPOINT = `${BACKEND_URL}/api`;
