@@ -787,7 +787,7 @@ migrate_vehicle_usage_is_claimed()
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
     "dashboard", "leads", "employees", "attendance", "leaves", "expenses",
-    "roles", "workspace", "idcards", "documents", "settings", "holidays", "tasks", "customers"
+    "roles", "workspace", "idcards", "documents", "settings", "holidays", "tasks", "customers", "vehicles"
 ]
 
 def seed_roles_if_needed():
@@ -807,7 +807,26 @@ def seed_roles_if_needed():
     finally:
         db.close()
 
+def ensure_admin_has_all_permissions():
+    """Ensure Admin role has all available permissions"""
+    db = SessionLocal()
+    try:
+        admin_role = db.query(RoleModel).filter(RoleModel.name == "Admin").first()
+        if admin_role:
+            try:
+                current_perms = json.loads(admin_role.permissions) if admin_role.permissions else []
+            except:
+                current_perms = []
+            
+            # Update admin role to have all permissions
+            if set(current_perms) != set(DEFAULT_PERMISSION_KEYS):
+                admin_role.permissions = json.dumps(DEFAULT_PERMISSION_KEYS)
+                db.commit()
+    finally:
+        db.close()
+
 seed_roles_if_needed()
+ensure_admin_has_all_permissions()
 
 # ============= PYDANTIC MODELS =============
 
