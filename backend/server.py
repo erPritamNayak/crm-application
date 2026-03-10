@@ -811,6 +811,35 @@ def migrate_vehicle_usage_is_claimed():
 
 migrate_vehicle_usage_is_claimed()
 
+def migrate_expenses_add_attachments():
+    """Add attachment_path_1 and attachment_path_2 columns to expenses if missing."""
+    from sqlalchemy import text, inspect
+    try:
+        # Use SQLAlchemy inspector to check for columns (works with all DB types)
+        inspector = inspect(engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('expenses')]
+        
+        new_cols = [
+            ('attachment_path_1', 'VARCHAR(500)'),
+            ('attachment_path_2', 'VARCHAR(500)'),
+        ]
+        
+        with engine.connect() as conn:
+            for col, typ in new_cols:
+                col_name = col.split()[0]
+                if col_name not in existing_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE expenses ADD COLUMN {col} {typ}"))
+                        conn.commit()
+                        print(f"Added column {col_name} to expenses table")
+                    except Exception as alter_err:
+                        print(f"Could not add column {col_name}: {alter_err}")
+                        conn.rollback()
+    except Exception as e:
+        print(f"Migration error for expenses attachments: {e}")
+
+migrate_expenses_add_attachments()
+
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
     "dashboard", "leads", "employees", "attendance", "leaves", "expenses",

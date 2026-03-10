@@ -42,6 +42,7 @@ export const Expenses = () => {
   const [summary, setSummary] = useState(null);
   const [summaryMonth, setSummaryMonth] = useState(new Date().getMonth() + 1);
   const [summaryYear, setSummaryYear] = useState(new Date().getFullYear());
+  const [summaryEmployeeFilter, setSummaryEmployeeFilter] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFileUrl, setPreviewFileUrl] = useState(null);
   const [previewFileName, setPreviewFileName] = useState('Receipt');
@@ -107,6 +108,11 @@ export const Expenses = () => {
   useEffect(() => {
     if (user?.role === 'Admin' && summaryMonth && summaryYear) fetchSummary();
   }, [user?.role, summaryMonth, summaryYear]);
+
+  useEffect(() => {
+    // Reset employee filter when summary changes
+    setSummaryEmployeeFilter('');
+  }, [summaryMonth, summaryYear]);
 
   useEffect(() => {
     if (dialogOpen && user?.employee_id && !formData.employee_id) {
@@ -551,7 +557,7 @@ export const Expenses = () => {
               <h2 className="text-lg font-semibold text-gray-900">Expense summary by employee</h2>
             </div>
             <p className="text-sm text-gray-500">Use this for end-of-month salary compensation</p>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <select
                 value={summaryMonth}
                 onChange={(e) => setSummaryMonth(Number(e.target.value))}
@@ -570,6 +576,18 @@ export const Expenses = () => {
                   <option key={y} value={y}>{y}</option>
                 ))}
               </select>
+              <select
+                value={summaryEmployeeFilter}
+                onChange={(e) => setSummaryEmployeeFilter(e.target.value)}
+                className="h-9 rounded-md border border-gray-300 bg-white px-3 text-sm"
+              >
+                <option value="">All Employees</option>
+                {summary?.employees?.map((emp) => (
+                  <option key={emp.employee_id} value={emp.employee_id}>
+                    {emp.employee_name} ({emp.employee_id})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           {summary?.employees?.length > 0 ? (
@@ -586,7 +604,9 @@ export const Expenses = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {summary.employees.map((row) => {
+                  {summary.employees
+                    .filter(row => !summaryEmployeeFilter || row.employee_id === summaryEmployeeFilter)
+                    .map((row) => {
                     const fuelApproved = vehicleClaimsSummary[row.employee_id] || 0;
                     const totalToPay = (row.total_approved || 0) + fuelApproved;
                     return (
