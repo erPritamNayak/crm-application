@@ -118,6 +118,8 @@ export const Leads = () => {
   const [detailTab, setDetailTab] = useState('overview'); // 'overview', 'activity', 'reminders'
   const [importing, setImporting] = useState(false);
   const [attachments, setAttachments] = useState([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [customerContacts, setCustomerContacts] = useState([]);
   const fileInputRef = useRef(null);
   const statusChangeFileRef = useRef(null);
   const [showOrderDialog, setShowOrderDialog] = useState(false);
@@ -245,6 +247,16 @@ export const Leads = () => {
     }
   };
 
+  const fetchCustomerContacts = async (customerId) => {
+    try {
+      const { data } = await axios.get(`${API}/customers/${customerId}/contacts`, { headers: authHeader() });
+      setCustomerContacts(data);
+    } catch (err) {
+      console.error('Failed to load customer contacts:', err);
+      setCustomerContacts([]);
+    }
+  };
+
   const checkUpcomingReminders = async () => {
     try {
       const { data: leadsData } = await axios.get(`${API}/leads`, { headers: authHeader() });
@@ -329,6 +341,8 @@ export const Leads = () => {
       toast.success('Lead created');
       setAddDialogOpen(false);
       setFormData(defaultLeadForm);
+      setSelectedCustomerId('');
+      setCustomerContacts([]);
       fetchLeads();
       fetchStats();
     } catch (err) {
@@ -350,6 +364,8 @@ export const Leads = () => {
       toast.success('Lead updated');
       setEditDialogOpen(false);
       setSelectedLead(null);
+      setSelectedCustomerId('');
+      setCustomerContacts([]);
       fetchLeads();
       fetchStats();
       if (detailSheetOpen) {
@@ -895,9 +911,10 @@ export const Leads = () => {
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold text-gray-700">Customer *</Label>
                   <select
-                    value={formData.company}
+                    value={selectedCustomerId}
                     onChange={(e) => {
                       const selectedCustomer = customers.find(c => c.id === e.target.value);
+                      setSelectedCustomerId(e.target.value);
                       if (selectedCustomer) {
                         setFormData({
                           ...formData,
@@ -906,6 +923,8 @@ export const Leads = () => {
                           phone: selectedCustomer.phone || '',
                           email: selectedCustomer.email || ''
                         });
+                        // Fetch contacts for this customer
+                        fetchCustomerContacts(e.target.value);
                       }
                     }}
                     required
@@ -919,6 +938,34 @@ export const Leads = () => {
                     ))}
                   </select>
                 </div>
+                {selectedCustomerId && customerContacts.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700">Contact Person</Label>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const selectedContact = customerContacts.find(c => c.id === e.target.value);
+                          if (selectedContact) {
+                            setFormData({
+                              ...formData,
+                              contact_name: selectedContact.contact_person_name,
+                              phone: selectedContact.phone || formData.phone || '',
+                              email: selectedContact.email || formData.email || ''
+                            });
+                          }
+                        }
+                      }}
+                      className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
+                    >
+                      <option value="">Select a contact (optional)</option>
+                      {customerContacts.map((contact) => (
+                        <option key={contact.id} value={contact.id}>
+                          {contact.contact_person_name} {contact.designation ? `- ${contact.designation}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -1115,7 +1162,11 @@ export const Leads = () => {
                 </Button>
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
+                <Button type="button" variant="outline" onClick={() => {
+                  setAddDialogOpen(false);
+                  setSelectedCustomerId('');
+                  setCustomerContacts([]);
+                }}>
                   Cancel
                 </Button>
                 <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white">
@@ -1976,8 +2027,10 @@ export const Leads = () => {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-gray-700">Customer</Label>
                 <select
+                  value={selectedCustomerId}
                   onChange={(e) => {
                     const selectedCustomer = customers.find(c => c.id === e.target.value);
+                    setSelectedCustomerId(e.target.value);
                     if (selectedCustomer) {
                       setFormData({
                         ...formData,
@@ -1986,6 +2039,8 @@ export const Leads = () => {
                         phone: selectedCustomer.phone || '',
                         email: selectedCustomer.email || ''
                       });
+                      // Fetch contacts for this customer
+                      fetchCustomerContacts(e.target.value);
                     }
                   }}
                   className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
@@ -1998,6 +2053,34 @@ export const Leads = () => {
                   ))}
                 </select>
               </div>
+              {selectedCustomerId && customerContacts.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold text-gray-700">Contact Person</Label>
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        const selectedContact = customerContacts.find(c => c.id === e.target.value);
+                        if (selectedContact) {
+                          setFormData({
+                            ...formData,
+                            contact_name: selectedContact.contact_person_name,
+                            phone: selectedContact.phone || formData.phone || '',
+                            email: selectedContact.email || formData.email || ''
+                          });
+                        }
+                      }
+                    }}
+                    className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
+                  >
+                    <option value="">Select a contact (optional)</option>
+                    {customerContacts.map((contact) => (
+                      <option key={contact.id} value={contact.id}>
+                        {contact.contact_person_name} {contact.designation ? `- ${contact.designation}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -2188,7 +2271,11 @@ export const Leads = () => {
               </Button>
             </div>
             <div className="flex justify-end gap-3 pt-2">
-              <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => {
+                setEditDialogOpen(false);
+                setSelectedCustomerId('');
+                setCustomerContacts([]);
+              }}>
                 Cancel
               </Button>
               <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white">

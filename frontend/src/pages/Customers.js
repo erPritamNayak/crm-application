@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -31,7 +31,9 @@ export const Customers = () => {
     state: '',
     pincode: '',
     country: 'India',
-    status: 'Active'
+    status: 'Active',
+    contacts: [{ contact_person_name: '', designation: '', phone: '', email: '', is_primary: 0 }],
+    addresses: [{ address_line: '', city: '', state: '', pincode: '', country: 'India', is_primary: 0 }]
   });
 
   useEffect(() => {
@@ -66,13 +68,42 @@ export const Customers = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      // Filter out empty contacts (only include if contact_person_name is provided)
+      const filteredContacts = formData.contacts
+        .filter(contact => contact.contact_person_name && contact.contact_person_name.trim())
+        .map(contact => ({
+          contact_person_name: contact.contact_person_name,
+          designation: contact.designation || null,
+          phone: contact.phone || null,
+          email: contact.email || null,
+          is_primary: contact.is_primary || 0
+        }));
+
+      // Filter out empty addresses (only include if address_line is provided)
+      const filteredAddresses = formData.addresses
+        .filter(address => address.address_line && address.address_line.trim())
+        .map(address => ({
+          address_line: address.address_line,
+          city: address.city || null,
+          state: address.state || null,
+          pincode: address.pincode || null,
+          country: address.country || 'India',
+          is_primary: address.is_primary || 0
+        }));
+
+      const dataToSubmit = {
+        ...formData,
+        contacts: filteredContacts,
+        addresses: filteredAddresses
+      };
+
       if (editingCustomer) {
-        await axios.put(`${API}/customers/${editingCustomer.id}`, formData, {
+        await axios.put(`${API}/customers/${editingCustomer.id}`, dataToSubmit, {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         });
         toast.success('Customer updated successfully');
       } else {
-        await axios.post(`${API}/customers`, formData, {
+        await axios.post(`${API}/customers`, dataToSubmit, {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         });
         toast.success('Customer added successfully');
@@ -81,7 +112,11 @@ export const Customers = () => {
       resetForm();
       fetchCustomers();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Operation failed');
+      console.error('Error:', error);
+      const errorMsg = error.response?.data?.detail || 
+                       (error.response?.data && error.response.data[0]?.msg) ||
+                       'Operation failed';
+      toast.error(errorMsg);
     }
   };
 
@@ -100,6 +135,14 @@ export const Customers = () => {
 
   const handleEdit = (customer) => {
     setEditingCustomer(customer);
+    const contactsData = customer.contacts && customer.contacts.length > 0 
+      ? customer.contacts.map(c => ({ contact_person_name: c.contact_person_name, designation: c.designation || '', phone: c.phone || '', email: c.email || '', is_primary: c.is_primary || 0 }))
+      : [{ contact_person_name: '', designation: '', phone: '', email: '', is_primary: 0 }];
+    
+    const addressesData = customer.addresses && customer.addresses.length > 0 
+      ? customer.addresses.map(a => ({ address_line: a.address_line, city: a.city || '', state: a.state || '', pincode: a.pincode || '', country: a.country || 'India', is_primary: a.is_primary || 0 }))
+      : [{ address_line: '', city: '', state: '', pincode: '', country: 'India', is_primary: 0 }];
+    
     setFormData({
       company_name: customer.company_name,
       gst_number: customer.gst_number || '',
@@ -111,7 +154,9 @@ export const Customers = () => {
       state: customer.state || '',
       pincode: customer.pincode || '',
       country: customer.country || 'India',
-      status: customer.status
+      status: customer.status,
+      contacts: contactsData,
+      addresses: addressesData
     });
     setDialogOpen(true);
   };
@@ -128,9 +173,53 @@ export const Customers = () => {
       state: '',
       pincode: '',
       country: 'India',
-      status: 'Active'
+      status: 'Active',
+      contacts: [{ contact_person_name: '', designation: '', phone: '', email: '', is_primary: 0 }],
+      addresses: [{ address_line: '', city: '', state: '', pincode: '', country: 'India', is_primary: 0 }]
     });
     setEditingCustomer(null);
+  };
+
+  const addContact = () => {
+    setFormData({
+      ...formData,
+      contacts: [...formData.contacts, { contact_person_name: '', designation: '', phone: '', email: '', is_primary: 0 }]
+    });
+  };
+
+  const removeContact = (index) => {
+    const updatedContacts = formData.contacts.filter((_, i) => i !== index);
+    setFormData({
+      ...formData,
+      contacts: updatedContacts.length > 0 ? updatedContacts : [{ contact_person_name: '', designation: '', phone: '', email: '', is_primary: 0 }]
+    });
+  };
+
+  const updateContact = (index, field, value) => {
+    const updatedContacts = [...formData.contacts];
+    updatedContacts[index][field] = value;
+    setFormData({ ...formData, contacts: updatedContacts });
+  };
+
+  const addAddress = () => {
+    setFormData({
+      ...formData,
+      addresses: [...formData.addresses, { address_line: '', city: '', state: '', pincode: '', country: 'India', is_primary: 0 }]
+    });
+  };
+
+  const removeAddress = (index) => {
+    const updatedAddresses = formData.addresses.filter((_, i) => i !== index);
+    setFormData({
+      ...formData,
+      addresses: updatedAddresses.length > 0 ? updatedAddresses : [{ address_line: '', city: '', state: '', pincode: '', country: 'India', is_primary: 0 }]
+    });
+  };
+
+  const updateAddress = (index, field, value) => {
+    const updatedAddresses = [...formData.addresses];
+    updatedAddresses[index][field] = value;
+    setFormData({ ...formData, addresses: updatedAddresses });
   };
 
   if (loading) {
@@ -229,89 +318,164 @@ export const Customers = () => {
 
                 {/* Contact Information */}
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Phone className="h-5 w-5 text-blue-600" />
-                    Contact Information
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="phone" className="text-sm font-medium text-gray-700">Phone Number</Label>
-                      <Input
-                        id="phone"
-                        data-testid="customer-phone-input"
-                        value={formData.phone}
-                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        placeholder="e.g., +91 9876543210"
-                        className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email" className="text-sm font-medium text-gray-700">Email Address</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        data-testid="customer-email-input"
-                        value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                      />
-                    </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                      <Phone className="h-5 w-5 text-blue-600" />
+                      Contact Information
+                    </h3>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="bg-blue-600 text-white hover:bg-blue-700"
+                      onClick={addContact}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add Contact
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    {formData.contacts && formData.contacts.map((contact, idx) => (
+                      <div key={idx} className="border border-gray-300 rounded-lg p-4 bg-gray-50">
+                        <div className="flex justify-between items-center mb-4">
+                          <span className="text-sm font-medium text-gray-700">Contact #{idx + 1}</span>
+                          {formData.contacts.length > 1 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 border-red-200 text-red-600 hover:bg-red-50"
+                              onClick={() => removeContact(idx)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact_name_${idx}`} className="text-sm font-medium text-gray-700">Contact Person Name</Label>
+                            <Input
+                              id={`contact_name_${idx}`}
+                              value={contact.contact_person_name}
+                              onChange={(e) => updateContact(idx, 'contact_person_name', e.target.value)}
+                              className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`designation_${idx}`} className="text-sm font-medium text-gray-700">Designation</Label>
+                            <Input
+                              id={`designation_${idx}`}
+                              value={contact.designation}
+                              onChange={(e) => updateContact(idx, 'designation', e.target.value)}
+                              placeholder="e.g., Manager, Director"
+                              className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact_phone_${idx}`} className="text-sm font-medium text-gray-700">Phone</Label>
+                            <Input
+                              id={`contact_phone_${idx}`}
+                              value={contact.phone}
+                              onChange={(e) => updateContact(idx, 'phone', e.target.value)}
+                              placeholder="e.g., +91 9876543210"
+                              className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact_email_${idx}`} className="text-sm font-medium text-gray-700">Email</Label>
+                            <Input
+                              id={`contact_email_${idx}`}
+                              type="email"
+                              value={contact.email}
+                              onChange={(e) => updateContact(idx, 'email', e.target.value)}
+                              className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
                 {/* Address Information */}
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <MapPin className="h-5 w-5 text-blue-600" />
-                    Address
-                  </h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                      <MapPin className="h-5 w-5 text-blue-600" />
+                      Address
+                    </h3>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="bg-blue-600 text-white hover:bg-blue-700"
+                      onClick={addAddress}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add Address
+                    </Button>
+                  </div>
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="address_line" className="text-sm font-medium text-gray-700">Address Line</Label>
-                      <Input
-                        id="address_line"
-                        data-testid="customer-address-input"
-                        value={formData.address_line}
-                        onChange={(e) => setFormData({ ...formData, address_line: e.target.value })}
-                        placeholder="e.g., Plot 123, Industrial Area"
-                        className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                      />
-                    </div>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="city" className="text-sm font-medium text-gray-700">City</Label>
-                        <Input
-                          id="city"
-                          data-testid="customer-city-input"
-                          value={formData.city}
-                          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                          placeholder="e.g., Mumbai"
-                          className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                        />
+                    {formData.addresses && formData.addresses.map((address, idx) => (
+                      <div key={idx} className="border border-gray-300 rounded-lg p-4 bg-gray-50">
+                        <div className="flex justify-between items-center mb-4">
+                          <span className="text-sm font-medium text-gray-700">Address #{idx + 1}</span>
+                          {formData.addresses.length > 1 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 border-red-200 text-red-600 hover:bg-red-50"
+                              onClick={() => removeAddress(idx)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor={`address_line_${idx}`} className="text-sm font-medium text-gray-700">Address Line</Label>
+                            <Input
+                              id={`address_line_${idx}`}
+                              value={address.address_line}
+                              onChange={(e) => updateAddress(idx, 'address_line', e.target.value)}
+                              placeholder="e.g., Plot 123, Industrial Area"
+                              className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                          <div className="grid grid-cols-3 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor={`city_${idx}`} className="text-sm font-medium text-gray-700">City</Label>
+                              <Input
+                                id={`city_${idx}`}
+                                value={address.city}
+                                onChange={(e) => updateAddress(idx, 'city', e.target.value)}
+                                placeholder="e.g., Mumbai"
+                                className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`state_${idx}`} className="text-sm font-medium text-gray-700">State</Label>
+                              <Input
+                                id={`state_${idx}`}
+                                value={address.state}
+                                onChange={(e) => updateAddress(idx, 'state', e.target.value)}
+                                placeholder="e.g., Maharashtra"
+                                className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`pincode_${idx}`} className="text-sm font-medium text-gray-700">Pincode</Label>
+                              <Input
+                                id={`pincode_${idx}`}
+                                value={address.pincode}
+                                onChange={(e) => updateAddress(idx, 'pincode', e.target.value)}
+                                placeholder="e.g., 400001"
+                                className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                              />
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="state" className="text-sm font-medium text-gray-700">State</Label>
-                        <Input
-                          id="state"
-                          data-testid="customer-state-input"
-                          value={formData.state}
-                          onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                          placeholder="e.g., Maharashtra"
-                          className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="pincode" className="text-sm font-medium text-gray-700">Pincode</Label>
-                        <Input
-                          id="pincode"
-                          data-testid="customer-pincode-input"
-                          value={formData.pincode}
-                          onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
-                          placeholder="e.g., 400001"
-                          className="border border-gray-300 h-11 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                        />
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
 

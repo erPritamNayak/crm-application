@@ -271,6 +271,31 @@ class CustomerModel(Base):
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+class CustomerContactModel(Base):
+    __tablename__ = "customer_contacts"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    customer_id = Column(String(36), ForeignKey('customers.id'), index=True)
+    contact_person_name = Column(String(255))
+    designation = Column(String(255), nullable=True)
+    phone = Column(String(20), nullable=True)
+    email = Column(String(255), nullable=True)
+    is_primary = Column(Integer, default=0)  # 0 or 1
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class CustomerAddressModel(Base):
+    __tablename__ = "customer_addresses"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    customer_id = Column(String(36), ForeignKey('customers.id'), index=True)
+    address_line = Column(String(500))
+    city = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True)
+    pincode = Column(String(20), nullable=True)
+    country = Column(String(100), nullable=True, default='India')
+    is_primary = Column(Integer, default=0)  # 0 or 1
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
 class TaskModel(Base):
     __tablename__ = "tasks"
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -907,6 +932,46 @@ class EmployeeUpdateProfile(BaseModel):
     phone: Optional[str] = None
     profile_photo: Optional[str] = None
 
+class CustomerContact(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    customer_id: str
+    contact_person_name: str
+    designation: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_primary: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = None
+
+class CustomerContactCreate(BaseModel):
+    contact_person_name: str
+    designation: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_primary: int = 0
+
+class CustomerAddress(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    customer_id: str
+    address_line: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    country: str = 'India'
+    is_primary: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = None
+
+class CustomerAddressCreate(BaseModel):
+    address_line: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    country: str = 'India'
+    is_primary: int = 0
+
 class Customer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -922,10 +987,12 @@ class Customer(BaseModel):
     pincode: Optional[str] = None
     country: str = 'India'
     status: Literal['Active', 'Inactive'] = 'Active'
+    contacts: Optional[List[CustomerContact]] = None
+    addresses: Optional[List[CustomerAddress]] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class CustomerCreate(BaseModel):
+class CustomerCreateUpdate(BaseModel):
     company_name: str
     gst_number: Optional[str] = None
     contact_person_name: str
@@ -937,6 +1004,8 @@ class CustomerCreate(BaseModel):
     pincode: Optional[str] = None
     country: str = 'India'
     status: Literal['Active', 'Inactive'] = 'Active'
+    contacts: Optional[List[CustomerContactCreate]] = None
+    addresses: Optional[List[CustomerAddressCreate]] = None
 
 class Task(BaseModel):
     model_config = ConfigDict(extra="ignore", from_attributes=True)
@@ -1243,36 +1312,6 @@ class DailyWorkLogCreate(BaseModel):
     log_date: str
     summary: str
 
-class Customer(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    customer_id: str
-    company_name: str
-    gst_number: Optional[str] = None
-    contact_person_name: str
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    address_line: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    pincode: Optional[str] = None
-    country: str = 'India'
-    status: str = 'Active'
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: Optional[datetime] = None
-
-class CustomerCreate(BaseModel):
-    company_name: str
-    gst_number: Optional[str] = None
-    contact_person_name: str
-    phone: Optional[str] = None
-    email: Optional[EmailStr] = None
-    address_line: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    pincode: Optional[str] = None
-    country: str = 'India'
-    status: str = 'Active'
 
 class UserRoleUpdate(BaseModel):
     role: str  # must exist in roles table
@@ -2095,7 +2134,7 @@ def is_within_office(db: Session, lat: float, lng: float) -> bool:
 # ============= CUSTOMERS =============
 
 @api_router.post('/customers', response_model=Customer)
-def create_customer(cust_data: CustomerCreate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_customer(cust_data: CustomerCreateUpdate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     
     max_cust_num = db.query(
         func.max(cast(func.substr(CustomerModel.customer_id, 5), Integer))
@@ -2125,11 +2164,51 @@ def create_customer(cust_data: CustomerCreate, current_user: UserModel = Depends
         db.rollback()
         raise HTTPException(status_code=409, detail='Customer already exists')
     
+    # Add contacts
+    if cust_data.contacts:
+        for contact in cust_data.contacts:
+            new_contact = CustomerContactModel(
+                customer_id=new_customer.id,
+                contact_person_name=contact.contact_person_name,
+                designation=contact.designation,
+                phone=contact.phone,
+                email=contact.email,
+                is_primary=contact.is_primary
+            )
+            db.add(new_contact)
+    
+    # Add addresses
+    if cust_data.addresses:
+        for address in cust_data.addresses:
+            new_address = CustomerAddressModel(
+                customer_id=new_customer.id,
+                address_line=address.address_line,
+                city=address.city,
+                state=address.state,
+                pincode=address.pincode,
+                country=address.country,
+                is_primary=address.is_primary
+            )
+            db.add(new_address)
+    
+    db.commit()
+    db.refresh(new_customer)
+    
+    # Load relationships for response
+    new_customer.contacts = db.query(CustomerContactModel).filter(CustomerContactModel.customer_id == new_customer.id).all()
+    new_customer.addresses = db.query(CustomerAddressModel).filter(CustomerAddressModel.customer_id == new_customer.id).all()
+    
     return new_customer
 
 @api_router.get('/customers', response_model=List[Customer])
 def get_customers(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     customers = db.query(CustomerModel).filter(CustomerModel.status == 'Active').all()
+    
+    # Attach contacts and addresses
+    for customer in customers:
+        customer.contacts = db.query(CustomerContactModel).filter(CustomerContactModel.customer_id == customer.id).all()
+        customer.addresses = db.query(CustomerAddressModel).filter(CustomerAddressModel.customer_id == customer.id).all()
+    
     return customers
 
 @api_router.get('/customers/{customer_id}', response_model=Customer)
@@ -2137,22 +2216,76 @@ def get_customer(customer_id: str, current_user: UserModel = Depends(get_current
     customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail='Customer not found')
+    
+    # Attach contacts and addresses
+    customer.contacts = db.query(CustomerContactModel).filter(CustomerContactModel.customer_id == customer.id).all()
+    customer.addresses = db.query(CustomerAddressModel).filter(CustomerAddressModel.customer_id == customer.id).all()
+    
     return customer
 
 @api_router.put('/customers/{customer_id}', response_model=Customer)
-def update_customer(customer_id: str, cust_data: CustomerCreate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_customer(customer_id: str, cust_data: CustomerCreateUpdate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
     
     customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail='Customer not found')
     
-    for key, value in cust_data.model_dump().items():
-        setattr(customer, key, value)
+    # Update basic customer fields
+    basic_fields = ['company_name', 'gst_number', 'contact_person_name', 'phone', 'email', 'address_line', 'city', 'state', 'pincode', 'country', 'status']
+    for field in basic_fields:
+        if hasattr(cust_data, field):
+            setattr(customer, field, getattr(cust_data, field))
+    
     customer.updated_at = datetime.now()
     db.commit()
     db.refresh(customer)
     
+    # Delete and recreate contacts
+    if cust_data.contacts is not None:
+        db.query(CustomerContactModel).filter(CustomerContactModel.customer_id == customer.id).delete()
+        for contact in cust_data.contacts:
+            new_contact = CustomerContactModel(
+                customer_id=customer.id,
+                contact_person_name=contact.contact_person_name,
+                designation=contact.designation,
+                phone=contact.phone,
+                email=contact.email,
+                is_primary=contact.is_primary
+            )
+            db.add(new_contact)
+    
+    # Delete and recreate addresses
+    if cust_data.addresses is not None:
+        db.query(CustomerAddressModel).filter(CustomerAddressModel.customer_id == customer.id).delete()
+        for address in cust_data.addresses:
+            new_address = CustomerAddressModel(
+                customer_id=customer.id,
+                address_line=address.address_line,
+                city=address.city,
+                state=address.state,
+                pincode=address.pincode,
+                country=address.country,
+                is_primary=address.is_primary
+            )
+            db.add(new_address)
+    
+    db.commit()
+    db.refresh(customer)
+    
+    # Load relationships for response
+    customer.contacts = db.query(CustomerContactModel).filter(CustomerContactModel.customer_id == customer.id).all()
+    customer.addresses = db.query(CustomerAddressModel).filter(CustomerAddressModel.customer_id == customer.id).all()
+    
     return customer
+
+@api_router.get('/customers/{customer_id}/contacts', response_model=List[CustomerContact])
+def get_customer_contacts(customer_id: str, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+    customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail='Customer not found')
+    
+    contacts = db.query(CustomerContactModel).filter(CustomerContactModel.customer_id == customer_id).all()
+    return contacts
 
 @api_router.delete('/customers/{customer_id}')
 def delete_customer(customer_id: str, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -3572,100 +3705,6 @@ def get_attendance_report(
     return report
 
 
-# ============= CUSTOMER ROUTES =============
-
-@api_router.get('/customers', response_model=List[Customer])
-def get_customers(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Get all customers"""
-    customers = db.query(CustomerModel).order_by(CustomerModel.created_at.desc()).all()
-    return customers
-
-@api_router.post('/customers', response_model=Customer)
-def create_customer(customer_data: CustomerCreate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Create a new customer"""
-    
-    # Generate customer ID
-    max_customer_num = db.query(
-        func.max(cast(func.substr(CustomerModel.customer_id, 4), Integer))
-    ).scalar()
-    next_customer_num = (max_customer_num or 0) + 1
-    customer_id = f'CUST{str(next_customer_num).zfill(4)}'
-    
-    new_customer = CustomerModel(
-        customer_id=customer_id,
-        company_name=customer_data.company_name,
-        gst_number=customer_data.gst_number,
-        contact_person_name=customer_data.contact_person_name,
-        phone=customer_data.phone,
-        email=customer_data.email,
-        address_line=customer_data.address_line,
-        city=customer_data.city,
-        state=customer_data.state,
-        pincode=customer_data.pincode,
-        country=customer_data.country,
-        status=customer_data.status
-    )
-    db.add(new_customer)
-    try:
-        db.commit()
-        db.refresh(new_customer)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail='Customer with this email already exists')
-    
-    return new_customer
-
-@api_router.get('/customers/{customer_id}', response_model=Customer)
-def get_customer(customer_id: str, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Get a specific customer by ID"""
-    customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail='Customer not found')
-    return customer
-
-@api_router.put('/customers/{customer_id}', response_model=Customer)
-def update_customer(customer_id: str, customer_data: CustomerCreate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Update a customer"""
-    
-    customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail='Customer not found')
-    
-    # Update fields
-    customer.company_name = customer_data.company_name
-    customer.gst_number = customer_data.gst_number
-    customer.contact_person_name = customer_data.contact_person_name
-    customer.phone = customer_data.phone
-    customer.email = customer_data.email
-    customer.address_line = customer_data.address_line
-    customer.city = customer_data.city
-    customer.state = customer_data.state
-    customer.pincode = customer_data.pincode
-    customer.country = customer_data.country
-    customer.status = customer_data.status
-    customer.updated_at = datetime.now()
-    
-    try:
-        db.commit()
-        db.refresh(customer)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail='Email already exists')
-    
-    return customer
-
-@api_router.delete('/customers/{customer_id}')
-def delete_customer(customer_id: str, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Delete a customer"""
-    
-    customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail='Customer not found')
-    
-    db.delete(customer)
-    db.commit()
-    
-    return {'message': 'Customer deleted successfully'}
 
 
 # ============= LEAVE ROUTES =============
