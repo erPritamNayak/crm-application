@@ -5788,6 +5788,7 @@ def complete_vehicle_usage(
         raise HTTPException(status_code=404, detail='Vehicle usage record not found')
     
     # Determine vehicle mileage (own vehicle or company vehicle)
+    vehicle = None
     if usage.own_vehicle_milage:
         milage = usage.own_vehicle_milage
     else:
@@ -5816,7 +5817,7 @@ def complete_vehicle_usage(
         usage.notes = data.notes
     
     # Update vehicle's current meter reading only for company vehicles
-    if usage.vehicle_id:
+    if vehicle:
         vehicle.current_meter_reading = data.end_meter_reading
     
     db.commit()
@@ -5836,13 +5837,26 @@ def complete_vehicle_usage_patch(
     if not usage:
         raise HTTPException(status_code=404, detail='Vehicle usage record not found')
     
-    vehicle = db.query(VehicleModel).filter(VehicleModel.id == usage.vehicle_id).first()
-    if not vehicle:
-        raise HTTPException(status_code=404, detail='Vehicle not found')
+    # Determine vehicle mileage (own vehicle or company vehicle)
+    vehicle = None
+    if usage.own_vehicle_milage:
+        milage = usage.own_vehicle_milage
+    else:
+        vehicle = db.query(VehicleModel).filter(VehicleModel.id == usage.vehicle_id).first()
+        if not vehicle:
+            raise HTTPException(status_code=404, detail='Vehicle not found')
+        milage = vehicle.milage
+    
+    # Validate meter reading
+    if data.end_meter_reading < 0 or data.end_meter_reading > 1000000:
+        raise HTTPException(status_code=400, detail='Invalid meter reading. Must be between 0 and 1,000,000 km')
+    
+    if data.end_meter_reading < usage.start_meter_reading:
+        raise HTTPException(status_code=400, detail='End meter reading must be greater than or equal to start meter reading')
     
     # Calculate KM driven and fuel consumed
     km_driven = data.end_meter_reading - usage.start_meter_reading
-    fuel_consumed = km_driven / vehicle.milage
+    fuel_consumed = km_driven / milage
     
     usage.end_meter_reading = data.end_meter_reading
     usage.km_driven = km_driven
@@ -5852,8 +5866,9 @@ def complete_vehicle_usage_patch(
     if data.notes:
         usage.notes = data.notes
     
-    # Update vehicle's current meter reading
-    vehicle.current_meter_reading = data.end_meter_reading
+    # Update vehicle's current meter reading only for company vehicles
+    if vehicle:
+        vehicle.current_meter_reading = data.end_meter_reading
     
     db.commit()
     db.refresh(usage)
