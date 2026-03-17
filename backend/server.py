@@ -1826,7 +1826,13 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     try:
         token = credentials.credentials
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        # Allow small clock skew between client and server when validating expiry
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            leeway=300,  # 5 minutes grace period
+        )
         user = db.query(UserModel).filter(UserModel.id == payload['user_id']).first()
         if not user:
             raise HTTPException(status_code=401, detail='User not found')
@@ -3124,9 +3130,11 @@ def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depe
     
     current_time = datetime.now(timezone.utc).strftime('%H:%M:%S')
     office = get_office_location(db)
-    is_admin_hr = current_user.role in ['Admin', 'HR']
+    # Roles that can manage attendance from the grid (Admin, HR, Accountant)
+    # should not be forced to send location for punch in/out.
+    is_admin_hr_or_accountant = current_user.role in ['Admin', 'HR', 'Accountant']
     # Employees must send location when office is configured
-    if office is not None and not is_admin_hr:
+    if office is not None and not is_admin_hr_or_accountant:
         if punch_data.latitude is None or punch_data.longitude is None:
             raise HTTPException(
                 status_code=400,

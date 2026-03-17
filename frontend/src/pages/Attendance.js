@@ -116,7 +116,12 @@ export const Attendance = () => {
   // Holidays
   const [holidays, setHolidays] = useState([]);
 
-  const canManageAttendance = ['Admin', 'HR', 'Accountant'].includes(user?.role);
+  // Attendance permissions:
+  // - Admin/HR: full attendance management (grid, regularize, report, late)
+  // - Accountant: limited (grid + punch in/out only)
+  const canManageAttendance = ['Admin', 'HR', 'Accountant'].includes(user?.role); // legacy flag used in logic below
+  const canManageAttendanceFull = ['Admin', 'HR'].includes(user?.role);
+  const canManageAttendanceGrid = ['Admin', 'HR', 'Accountant'].includes(user?.role);
   const canApproveTour = ['Admin', 'Manager'].includes(user?.role);
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
@@ -147,10 +152,10 @@ export const Attendance = () => {
 
   // Set grid view as default for admin users
   useEffect(() => {
-    if (canManageAttendance) {
+    if (canManageAttendanceGrid) {
       setActiveTab('grid');
     }
-  }, [canManageAttendance]);
+  }, [canManageAttendanceGrid]);
 
   const fetchEmployees = async () => {
     try {
@@ -247,7 +252,7 @@ export const Attendance = () => {
   };
 
   const fetchMonthlyAttendanceGrid = async (monthStr) => {
-    if (!canManageAttendance) return;
+    if (!canManageAttendanceGrid) return;
     setGridLoading(true);
     try {
       const month = monthStr || gridMonth;
@@ -481,11 +486,11 @@ export const Attendance = () => {
           <div className="flex gap-2 flex-wrap [&_button]:min-h-[44px]">
             {[
               { id: 'punch', label: 'Mark Attendance', show: true },
-              { id: 'grid', label: 'Attendance Grid', show: canManageAttendance },
-              { id: 'regularize', label: 'Regularize', show: canManageAttendance },
+              { id: 'grid', label: 'Attendance Grid', show: canManageAttendanceGrid },
+              { id: 'regularize', label: 'Regularize', show: canManageAttendanceFull },
               { id: 'tour', label: 'Tour Requests', show: canApproveTour },
-              { id: 'report', label: 'Report (Date Range)', show: canManageAttendance },
-              { id: 'late', label: 'Late Logins', show: canManageAttendance },
+              { id: 'report', label: 'Report (Date Range)', show: canManageAttendanceFull },
+              { id: 'late', label: 'Late Logins', show: canManageAttendanceFull },
               { id: 'summary', label: 'Monthly Summary', show: true },
             ].filter((t) => t.show).map((tab) => (
               <Button
@@ -503,7 +508,7 @@ export const Attendance = () => {
       )}
 
       {/* Admin Attendance Grid View */}
-      {canManageAttendance && activeTab === 'grid' && (
+      {canManageAttendanceGrid && activeTab === 'grid' && (
         <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm overflow-x-auto">
           <div className="mb-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -667,12 +672,15 @@ export const Attendance = () => {
                         );
                       });
                     })()}
+                    <th className="bg-gray-100 p-2 text-center font-semibold text-gray-700 border border-gray-200 min-w-[120px]">
+                      Present / Days
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {Object.values(gridData).length === 0 ? (
                     <tr>
-                      <td colSpan="32" className="p-4 text-center text-gray-500">
+                      <td colSpan="40" className="p-4 text-center text-gray-500">
                         No attendance data yet for this month.
                       </td>
                     </tr>
@@ -688,7 +696,10 @@ export const Attendance = () => {
                           const monthStart = new Date(year, month - 1, 1);
                           const monthEnd = endOfMonth(monthStart);
                           const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
-                          return days.map((day) => {
+                          let totalWorkingDays = 0;
+                          let presentDays = 0;
+
+                          const cells = days.map((day) => {
                             const dateStr = format(day, 'yyyy-MM-dd');
                             const today = new Date();
                             today.setHours(0, 0, 0, 0);
@@ -737,6 +748,17 @@ export const Attendance = () => {
                               statusText = 'Absent';
                               bgColor = 'bg-red-500';
                             }
+
+                            // Summary calculation:
+                            // Count working days as non-future, non-sunday, non-holiday days.
+                            if (!isFutureDate && !isSunday && !isHoliday) {
+                              totalWorkingDays += 1;
+                              const countsAsPresent =
+                                (record?.is_tour === 1 && record?.tour_approval_status === 'approved') ||
+                                record?.status === 'Present' ||
+                                record?.status === 'Late';
+                              if (countsAsPresent) presentDays += 1;
+                            }
                             
                             return (
                               <td
@@ -750,6 +772,15 @@ export const Attendance = () => {
                               </td>
                             );
                           });
+
+                          return (
+                            <>
+                              {cells}
+                              <td className="p-2 border border-gray-200 text-center bg-gray-50 font-semibold text-gray-900 whitespace-nowrap">
+                                {presentDays} / {totalWorkingDays}
+                              </td>
+                            </>
+                          );
                         })()}
                       </tr>
                     ))
@@ -762,7 +793,7 @@ export const Attendance = () => {
       )}
 
       {/* Regularize Attendance - Admin only */}
-      {canManageAttendance && activeTab === 'regularize' && (
+      {canManageAttendanceFull && activeTab === 'regularize' && (
         <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Regularize Attendance</h3>
@@ -1039,7 +1070,7 @@ export const Attendance = () => {
       )}
 
       {/* Report by date range - Admin/HR */}
-      {canManageAttendance && activeTab === 'report' && (
+      {canManageAttendanceFull && activeTab === 'report' && (
         <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Attendance Report (Date Range)</h3>
           <div className="flex flex-wrap gap-3 mb-4">
@@ -1125,7 +1156,7 @@ export const Attendance = () => {
       )}
 
       {/* Late logins - Admin/HR */}
-      {canManageAttendance && activeTab === 'late' && (
+      {canManageAttendanceFull && activeTab === 'late' && (
         <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <TrendingDown className="h-5 w-5 text-amber-600" />
