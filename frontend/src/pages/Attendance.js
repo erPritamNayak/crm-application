@@ -109,7 +109,7 @@ export const Attendance = () => {
   // Grid view states
   const [gridMonth, setGridMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [gridData, setGridData] = useState({});
-  const [lateApprovals, setLateApprovals] = useState({});  // {empId: {count: X, details: []}}
+  const [lateLogins, setLateLogins] = useState({});  // {empId: {count: X}}
   const [gridLoading, setGridLoading] = useState(false);
   const [gridViewMode, setGridViewMode] = useState('month'); // 'today' or 'month'
   
@@ -323,6 +323,31 @@ export const Attendance = () => {
       
       // Fetch attendance records
       const res = await axios.get(`${API}/attendance`, { params: { month }, headers: authHeader() });
+
+      // Count late logins per employee for this month (punched in after 10:30 AM)
+      const lateThresholdMinutes = 10 * 60 + 30;
+      const lateLoginMap = {};
+      res.data.forEach((record) => {
+        // Tour punches are handled separately on the grid (do not count as "late logins")
+        if (record.is_tour === 1) return;
+
+        const punchIn = record.punch_in;
+        if (!punchIn || typeof punchIn !== 'string') return;
+
+        const parts = punchIn.split(':');
+        const h = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) || 0;
+        if (Number.isNaN(h)) return;
+
+        const punchMinutes = h * 60 + m;
+        if (punchMinutes > lateThresholdMinutes) {
+          if (!lateLoginMap[record.employee_id]) {
+            lateLoginMap[record.employee_id] = { count: 0 };
+          }
+          lateLoginMap[record.employee_id].count += 1;
+        }
+      });
+
       // Organize attendance records by employee_id and date
       const gridMap = {};
       res.data.forEach((record) => {
@@ -335,29 +360,8 @@ export const Attendance = () => {
         }
         gridMap[record.employee_id].records[record.date] = record;
       });
-      
-      // Fetch approved late punch-in requests for the month
-      try {
-        const lateRes = await axios.get(`${API}/attendance/late-punch-in-requests?status=Approved`, { headers: authHeader() });
-        const approvalMap = {};
-        lateRes.data.forEach((req) => {
-          if (!approvalMap[req.employee_id]) {
-            approvalMap[req.employee_id] = { count: 0, details: [] };
-          }
-          // Only count if the date is in the current month
-          if (req.punch_in_date.startsWith(month)) {
-            approvalMap[req.employee_id].count += 1;
-            approvalMap[req.employee_id].details.push({
-              date: req.punch_in_date,
-              minutes_late: req.minutes_late
-            });
-          }
-        });
-        setLateApprovals(approvalMap);
-      } catch (err) {
-        console.error('Failed to load late approvals:', err);
-        setLateApprovals({});
-      }
+
+      setLateLogins(lateLoginMap);
       
       setGridData(gridMap);
       fetchHolidays(year);
@@ -772,7 +776,7 @@ export const Attendance = () => {
                       Tours
                     </th>
                     <th className="bg-gray-100 p-2 text-center font-semibold text-gray-700 border border-gray-200 min-w-[140px]">
-                      Late Approvals
+                      Late Logins
                     </th>
                   </tr>
                 </thead>
@@ -798,7 +802,7 @@ export const Attendance = () => {
                           let totalWorkingDays = 0;
                           let presentDays = 0;
                           let tourCount = 0;
-                          let lateApprovalCount = 0;
+                          let lateLoginCount = 0;
 
                           const cells = days.map((day) => {
                             const dateStr = format(day, 'yyyy-MM-dd');
@@ -872,8 +876,8 @@ export const Attendance = () => {
                               }
                             }
                           
-                          // Get late approval count for this employee for this month
-                          lateApprovalCount = lateApprovals[empData.employee_id]?.count || 0;
+                          // Get late login count for this employee for this month
+                          lateLoginCount = lateLogins[empData.employee_id]?.count || 0;
                             
                             return (
                               <td
@@ -898,7 +902,7 @@ export const Attendance = () => {
                                 {tourCount}
                               </td>
                               <td className="p-2 border border-gray-200 text-center bg-gray-50 font-semibold text-green-600 whitespace-nowrap">
-                                {lateApprovalCount}
+                                {lateLoginCount}
                               </td>
                             </>
                           );
