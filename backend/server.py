@@ -170,6 +170,42 @@ class AttendanceSessionModel(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
+class LatePunchInRequestModel(Base):
+    __tablename__ = "late_punch_in_requests"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    attendance_id = Column(String(36), ForeignKey('attendance.id'), index=True)
+    employee_id = Column(String(50), index=True)
+    employee_name = Column(String(255))
+    punch_in_time = Column(String(8))  # HH:MM:SS
+    minutes_late = Column(Integer)  # how many minutes after 10:30
+    status = Column(String(50), default='Pending')  # 'Pending', 'Approved', 'Rejected'
+    approver_id = Column(String(50), nullable=True)
+    approver_name = Column(String(255), nullable=True)
+    approval_reason = Column(String(500), nullable=True)
+    punch_in_date = Column(String(10), index=True)
+    requested_at = Column(DateTime, default=datetime.now)
+    approved_at = Column(DateTime, nullable=True)
+
+
+class LatePunchOutRequestModel(Base):
+    __tablename__ = "late_punch_out_requests"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    attendance_id = Column(String(36), ForeignKey('attendance.id'), index=True)
+    employee_id = Column(String(50), index=True)
+    employee_name = Column(String(255))
+    punch_out_time = Column(String(8))  # HH:MM:SS
+    minutes_late = Column(Integer)  # how many minutes after 7 PM (19:00)
+    status = Column(String(50), default='Pending')  # 'Pending', 'Approved', 'Rejected'
+    approver_id = Column(String(50), nullable=True)
+    approver_name = Column(String(255), nullable=True)
+    approval_reason = Column(String(500), nullable=True)
+    punch_out_date = Column(String(10), index=True)
+    requested_at = Column(DateTime, default=datetime.now)
+    approved_at = Column(DateTime, nullable=True)
+
+
+
+
 class SettingsModel(Base):
     __tablename__ = "settings"
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1228,12 +1264,44 @@ class Attendance(BaseModel):
     punch_out: Optional[str] = None
     work_hours: float = 0.0
     total_work_hours: float = 0.0
-    status: Literal['Present', 'Absent', 'Late', 'Half Day', 'Leave'] = 'Present'
+    status: Literal['Present', 'Absent', 'Late', 'Half Day', 'Leave', 'Pending Approval'] = 'Present'
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_tour: Optional[int] = None
     tour_approval_status: Optional[str] = None
     is_active_session: Optional[int] = None
     sessions: Optional[List[AttendanceSession]] = None
+
+class LatePunchInRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    attendance_id: str
+    employee_id: str
+    employee_name: str
+    punch_in_time: str
+    minutes_late: int
+    status: Literal['Pending', 'Approved', 'Rejected'] = 'Pending'
+    approver_id: Optional[str] = None
+    approver_name: Optional[str] = None
+    approval_reason: Optional[str] = None
+    punch_in_date: str
+    requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    approved_at: Optional[datetime] = None
+
+class LatePunchOutRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    attendance_id: str
+    employee_id: str
+    employee_name: str
+    punch_out_time: str
+    minutes_late: int
+    status: Literal['Pending', 'Approved', 'Rejected'] = 'Pending'
+    approver_id: Optional[str] = None
+    approver_name: Optional[str] = None
+    approval_reason: Optional[str] = None
+    punch_out_date: str
+    requested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    approved_at: Optional[datetime] = None
 
 class AttendancePunch(BaseModel):
     employee_id: str
@@ -3164,10 +3232,17 @@ def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depe
         
         # First punch in of the day
         hour, minute = int(current_time.split(':')[0]), int(current_time.split(':')[1])
-        if hour > 10 or (hour == 10 and minute > 30):
-            status = 'Late'
-        else:
-            status = 'Present'
+        is_late = hour > 10 or (hour == 10 and minute > 30)
+        
+        # Calculate minutes late if applicable
+        minutes_late = 0
+        if is_late:
+            late_threshold = datetime.strptime('10:30:00', '%H:%M:%S')
+            punch_time = datetime.strptime(current_time, '%H:%M:%S')
+            minutes_late = int((punch_time - late_threshold).total_seconds() / 60)
+        
+        status = 'Pending Approval' if is_late else 'Present'
+        
         new_attendance = AttendanceModel(
             employee_id=punch_data.employee_id,
             employee_name=employee.name,
@@ -3183,11 +3258,28 @@ def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depe
         db.add(new_attendance)
         db.commit()
         db.refresh(new_attendance)
+        
+        # If late punch-in, create approval request
+        if is_late:
+            late_request = LatePunchInRequestModel(
+                attendance_id=new_attendance.id,
+                employee_id=punch_data.employee_id,
+                employee_name=employee.name,
+                punch_in_time=current_time,
+                minutes_late=minutes_late,
+                punch_in_date=today,
+                status='Pending'
+            )
+            db.add(late_request)
+            db.commit()
+        
         return {
-            'message': 'Punched in successfully' if at_office else 'Recorded as Tour (official travel). Pending approval from Admin/Manager.',
+            'message': 'Punched in successfully. Waiting for admin approval due to late punch-in.' if is_late else 'Punched in successfully' if at_office else 'Recorded as Tour (official travel). Pending approval from Admin/Manager.',
             'attendance': new_attendance,
             'is_tour': not at_office,
             'is_new_session': False,
+            'is_late': is_late,
+            'minutes_late': minutes_late if is_late else None,
         }
     
     else:  # punch_out
@@ -3208,6 +3300,15 @@ def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depe
                     status_code=400, 
                     detail='Work log submission is mandatory before punch out. Please submit your work summary first.'
                 )
+        
+        # Check if punch-out is after 7 PM (19:00)
+        hour, minute = int(current_time.split(':')[0]), int(current_time.split(':')[1])
+        is_late_punch_out = hour > 19 or (hour == 19 and minute > 0)
+        minutes_late_out = 0
+        if is_late_punch_out:
+            late_threshold = datetime.strptime('19:00:00', '%H:%M:%S')
+            punch_out_time_parsed = datetime.strptime(current_time, '%H:%M:%S')
+            minutes_late_out = int((punch_out_time_parsed - late_threshold).total_seconds() / 60)
         
         # Find the session number for this session
         last_session = db.query(AttendanceSessionModel).filter(
@@ -3237,12 +3338,16 @@ def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depe
         )
         db.add(new_session)
         
-        # Update attendance record
+        # Update attendance record - set status based on late punch-out
         existing.punch_out = current_time
         existing.work_hours = round(work_hours, 2)
         existing.punch_out_lat = punch_data.latitude
         existing.punch_out_lng = punch_data.longitude
         existing.is_active_session = 0  # Mark as not active
+        
+        # Set status to Pending Approval if late punch-out, otherwise keep existing status
+        if is_late_punch_out and existing.status == 'Present':
+            existing.status = 'Pending Approval'
         
         # Calculate total work hours from all sessions
         all_sessions = db.query(AttendanceSessionModel).filter(
@@ -3259,14 +3364,30 @@ def punch_attendance(punch_data: AttendancePunch, current_user: UserModel = Depe
         db.commit()
         db.refresh(existing)
         
+        # If late punch-out, create approval request
+        if is_late_punch_out:
+            late_out_request = LatePunchOutRequestModel(
+                attendance_id=existing.id,
+                employee_id=punch_data.employee_id,
+                employee_name=employee.name,
+                punch_out_time=current_time,
+                minutes_late=minutes_late_out,
+                punch_out_date=today,
+                status='Pending'
+            )
+            db.add(late_out_request)
+            db.commit()
+        
         return {
-            'message': 'Punched out successfully' if at_office else 'Punch out recorded as Tour. Pending approval from Admin/Manager.',
+            'message': 'Punched out successfully. Waiting for admin approval due to late punch-out.' if is_late_punch_out else 'Punched out successfully' if at_office else 'Punch out recorded as Tour. Pending approval from Admin/Manager.',
             'attendance': existing,
             'is_tour': not at_office,
             'session_number': session_number,
             'session_work_hours': round(work_hours, 2),
             'total_work_hours': existing.total_work_hours,
-            'can_punch_in_again': True,  # Indicate they can punch in again
+            'can_punch_in_again': True,
+            'is_late_punch_out': is_late_punch_out,
+            'minutes_late_out': minutes_late_out if is_late_punch_out else None,
         }
 
 
@@ -3416,6 +3537,12 @@ class TourApproveAction(BaseModel):
     status: Literal['approved', 'rejected']
 
 
+class LatePunchInApproveAction(BaseModel):
+    request_id: str
+    status: Literal['Approved', 'Rejected']
+    reason: Optional[str] = None
+
+
 class RegularizeAttendanceRequest(BaseModel):
     employee_id: str
     date: str
@@ -3440,6 +3567,152 @@ def approve_tour(
     rec.tour_approval_status = body.status
     db.commit()
     return {'message': f'Tour {body.status}', 'attendance_id': rec.id}
+
+
+@api_router.get('/attendance/late-punch-in-requests')
+def get_late_punch_in_requests(
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    status: str = 'Pending'
+):
+    """Get pending late punch-in requests. Admin only."""
+    if current_user.role != 'Admin':
+        raise HTTPException(status_code=403, detail='Only Admin can view late punch-in requests')
+    
+    requests = db.query(LatePunchInRequestModel).filter(
+        LatePunchInRequestModel.status == status
+    ).order_by(LatePunchInRequestModel.requested_at.desc()).all()
+    
+    return [LatePunchInRequest.model_validate(r) for r in requests]
+
+
+@api_router.post('/attendance/late-punch-in-approve')
+def approve_late_punch_in(
+    body: LatePunchInApproveAction,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Approve or reject a late punch-in request. Admin only."""
+    if current_user.role != 'Admin':
+        raise HTTPException(status_code=403, detail='Only Admin can approve late punch-in requests')
+    
+    request_id = body.request_id
+    status = body.status  # 'Approved' or 'Rejected'
+    reason = body.reason or ''
+    
+    late_request = db.query(LatePunchInRequestModel).filter(
+        LatePunchInRequestModel.id == request_id
+    ).first()
+    
+    if not late_request:
+        raise HTTPException(status_code=404, detail='Late punch-in request not found')
+    
+    if late_request.status != 'Pending':
+        raise HTTPException(status_code=400, detail='Request already processed')
+    
+    # Update the request
+    late_request.status = status
+    late_request.approver_id = current_user.id
+    late_request.approver_name = current_user.name
+    late_request.approval_reason = reason
+    late_request.approved_at = datetime.now(timezone.utc)
+    
+    # Update the attendance record
+    attendance = db.query(AttendanceModel).filter(
+        AttendanceModel.id == late_request.attendance_id
+    ).first()
+    
+    if not attendance:
+        raise HTTPException(status_code=404, detail='Attendance record not found')
+    
+    if status == 'Approved':
+        attendance.status = 'Present'
+        message = 'Late punch-in approved. Employee marked as Present.'
+    else:
+        attendance.status = 'Absent'
+        message = 'Late punch-in rejected. Employee marked as Absent.'
+    
+    db.commit()
+    
+    return {
+        'message': message,
+        'request_id': request_id,
+        'attendance_id': attendance.id,
+        'new_status': attendance.status
+    }
+
+
+@api_router.get('/attendance/late-punch-out-requests')
+def get_late_punch_out_requests(
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    status: str = 'Pending'
+):
+    """Get late punch-out requests. Admin only."""
+    if current_user.role != 'Admin':
+        raise HTTPException(status_code=403, detail='Only Admin can view late punch-out requests')
+    
+    requests = db.query(LatePunchOutRequestModel).filter(
+        LatePunchOutRequestModel.status == status
+    ).order_by(LatePunchOutRequestModel.requested_at.desc()).all()
+    
+    return [LatePunchOutRequest.model_validate(r) for r in requests]
+
+
+@api_router.post('/attendance/late-punch-out-approve')
+def approve_late_punch_out(
+    body: LatePunchInApproveAction,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Approve or reject a late punch-out request. Admin only."""
+    if current_user.role != 'Admin':
+        raise HTTPException(status_code=403, detail='Only Admin can approve late punch-out requests')
+    
+    request_id = body.request_id
+    status = body.status  # 'Approved' or 'Rejected'
+    reason = body.reason or ''
+    
+    late_request = db.query(LatePunchOutRequestModel).filter(
+        LatePunchOutRequestModel.id == request_id
+    ).first()
+    
+    if not late_request:
+        raise HTTPException(status_code=404, detail='Late punch-out request not found')
+    
+    if late_request.status != 'Pending':
+        raise HTTPException(status_code=400, detail='Request already processed')
+    
+    # Update the request
+    late_request.status = status
+    late_request.approver_id = current_user.id
+    late_request.approver_name = current_user.name
+    late_request.approval_reason = reason
+    late_request.approved_at = datetime.now(timezone.utc)
+    
+    # Update the attendance record
+    attendance = db.query(AttendanceModel).filter(
+        AttendanceModel.id == late_request.attendance_id
+    ).first()
+    
+    if not attendance:
+        raise HTTPException(status_code=404, detail='Attendance record not found')
+    
+    if status == 'Approved':
+        attendance.status = 'Present'
+        message = 'Late punch-out approved. Employee marked as Present.'
+    else:
+        attendance.status = 'Absent'
+        message = 'Late punch-out rejected. Employee marked as Absent.'
+    
+    db.commit()
+    
+    return {
+        'message': message,
+        'request_id': request_id,
+        'attendance_id': attendance.id,
+        'new_status': attendance.status
+    }
 
 
 @api_router.post('/attendance/regularize')

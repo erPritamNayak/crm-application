@@ -87,16 +87,20 @@ export const Attendance = () => {
   const [attendanceSummary, setAttendanceSummary] = useState([]);
   const [report, setReport] = useState([]);
   const [lateDetails, setLateDetails] = useState([]);
+  const [latePunchInRequests, setLatePunchInRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-mm-dd'));
-  const [activeTab, setActiveTab] = useState('punch'); // punch | report | late | summary | tour | grid
+  const [activeTab, setActiveTab] = useState('punch'); // punch | report | late | summary | tour | grid | latepunchin
   const [reportLoading, setReportLoading] = useState(false);
   const [lateLoading, setLateLoading] = useState(false);
   const [punchLoading, setPunchLoading] = useState(false);
   const [tourPending, setTourPending] = useState([]);
   const [tourLoading, setTourLoading] = useState(false);
+  const [latePunchInLoading, setLatePunchInLoading] = useState(false);
+  const [latePunchOutRequests, setLatePunchOutRequests] = useState([]);
+  const [latePunchOutLoading, setLatePunchOutLoading] = useState(false);
   const [showPunchOutWorkLogDialog, setShowPunchOutWorkLogDialog] = useState(false);
   const [workLogSummary, setWorkLogSummary] = useState('');
   const [isSubmittingWorkLog, setIsSubmittingWorkLog] = useState(false);
@@ -105,6 +109,7 @@ export const Attendance = () => {
   // Grid view states
   const [gridMonth, setGridMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [gridData, setGridData] = useState({});
+  const [lateApprovals, setLateApprovals] = useState({});  // {empId: {count: X, details: []}}
   const [gridLoading, setGridLoading] = useState(false);
   const [gridViewMode, setGridViewMode] = useState('month'); // 'today' or 'month'
   
@@ -251,12 +256,72 @@ export const Attendance = () => {
     }
   };
 
+  const fetchLatePunchInRequests = async () => {
+    if (user?.role !== 'Admin') return;
+    setLatePunchInLoading(true);
+    try {
+      const res = await axios.get(`${API}/attendance/late-punch-in-requests?status=Pending`, { headers: authHeader() });
+      setLatePunchInRequests(res.data || []);
+    } catch (err) {
+      console.error('Failed to load late punch-in requests:', err);
+      toast.error('Failed to load late punch-in requests');
+    } finally {
+      setLatePunchInLoading(false);
+    }
+  };
+
+  const handleApproveLatePunchIn = async (requestId, status, reason = '') => {
+    try {
+      const res = await axios.post(
+        `${API}/attendance/late-punch-in-approve`,
+        { request_id: requestId, status, reason },
+        { headers: authHeader() }
+      );
+      toast.success(res.data.message);
+      fetchLatePunchInRequests();
+      fetchAttendance();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to process request');
+    }
+  };
+
+  const fetchLatePunchOutRequests = async () => {
+    if (user?.role !== 'Admin') return;
+    setLatePunchOutLoading(true);
+    try {
+      const res = await axios.get(`${API}/attendance/late-punch-out-requests?status=Pending`, { headers: authHeader() });
+      setLatePunchOutRequests(res.data || []);
+    } catch (err) {
+      console.error('Failed to load late punch-out requests:', err);
+      toast.error('Failed to load late punch-out requests');
+    } finally {
+      setLatePunchOutLoading(false);
+    }
+  };
+
+  const handleApproveLatePunchOut = async (requestId, status, reason = '') => {
+    try {
+      const res = await axios.post(
+        `${API}/attendance/late-punch-out-approve`,
+        { request_id: requestId, status, reason },
+        { headers: authHeader() }
+      );
+      toast.success(res.data.message);
+      fetchLatePunchOutRequests();
+      fetchAttendance();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to process request');
+    }
+  };
+
   const fetchMonthlyAttendanceGrid = async (monthStr) => {
     if (!canManageAttendanceGrid) return;
     setGridLoading(true);
     try {
       const month = monthStr || gridMonth;
       const year = parseInt(month.split('-')[0]);
+      
+      // Fetch attendance records
       const res = await axios.get(`${API}/attendance`, { params: { month }, headers: authHeader() });
       // Organize attendance records by employee_id and date
       const gridMap = {};
@@ -270,6 +335,30 @@ export const Attendance = () => {
         }
         gridMap[record.employee_id].records[record.date] = record;
       });
+      
+      // Fetch approved late punch-in requests for the month
+      try {
+        const lateRes = await axios.get(`${API}/attendance/late-punch-in-requests?status=Approved`, { headers: authHeader() });
+        const approvalMap = {};
+        lateRes.data.forEach((req) => {
+          if (!approvalMap[req.employee_id]) {
+            approvalMap[req.employee_id] = { count: 0, details: [] };
+          }
+          // Only count if the date is in the current month
+          if (req.punch_in_date.startsWith(month)) {
+            approvalMap[req.employee_id].count += 1;
+            approvalMap[req.employee_id].details.push({
+              date: req.punch_in_date,
+              minutes_late: req.minutes_late
+            });
+          }
+        });
+        setLateApprovals(approvalMap);
+      } catch (err) {
+        console.error('Failed to load late approvals:', err);
+        setLateApprovals({});
+      }
+      
       setGridData(gridMap);
       fetchHolidays(year);
     } catch (err) {
@@ -318,7 +407,9 @@ export const Attendance = () => {
 
   useEffect(() => {
     if (canApproveTour && activeTab === 'tour') fetchTourPending();
-  }, [canApproveTour, activeTab]);
+    if (user?.role === 'Admin' && activeTab === 'latepunchin') fetchLatePunchInRequests();
+    if (user?.role === 'Admin' && activeTab === 'latepunchout') fetchLatePunchOutRequests();
+  }, [canApproveTour, activeTab, user?.role]);
 
   useEffect(() => {
     if (canManageAttendance && activeTab === 'grid') {
@@ -489,6 +580,8 @@ export const Attendance = () => {
               { id: 'grid', label: 'Attendance Grid', show: canManageAttendanceGrid },
               { id: 'regularize', label: 'Regularize', show: canManageAttendanceFull },
               { id: 'tour', label: 'Tour Requests', show: canApproveTour },
+              { id: 'latepunchin', label: 'Late Punch-In Approvals', show: user?.role === 'Admin' },
+              { id: 'latepunchout', label: 'Late Punch-Out Approvals', show: user?.role === 'Admin' },
               { id: 'report', label: 'Report (Date Range)', show: canManageAttendanceFull },
               { id: 'late', label: 'Late Logins', show: canManageAttendanceFull },
               { id: 'summary', label: 'Monthly Summary', show: true },
@@ -578,7 +671,7 @@ export const Attendance = () => {
                 <span className="text-gray-700">Late Login</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-4 h-4 bg-orange-400 rounded"></div>
+                <div className="w-4 h-4 bg-pink-400 rounded"></div>
                 <span className="text-gray-700">Approved Tour</span>
               </div>
               <div className="flex items-center gap-2">
@@ -612,7 +705,7 @@ export const Attendance = () => {
                   let bgColor = 'bg-red-500';
                   if (todayRecord) {
                     if (todayRecord.is_tour === 1 && todayRecord.tour_approval_status === 'approved') {
-                      bgColor = 'bg-orange-400';
+                      bgColor = 'bg-pink-400';
                     } else if (todayRecord.status === 'Present') {
                       bgColor = 'bg-green-500';
                     } else if (todayRecord.status === 'Late') {
@@ -675,6 +768,12 @@ export const Attendance = () => {
                     <th className="bg-gray-100 p-2 text-center font-semibold text-gray-700 border border-gray-200 min-w-[120px]">
                       Present / Days
                     </th>
+                    <th className="bg-gray-100 p-2 text-center font-semibold text-gray-700 border border-gray-200 min-w-[100px]">
+                      Tours
+                    </th>
+                    <th className="bg-gray-100 p-2 text-center font-semibold text-gray-700 border border-gray-200 min-w-[140px]">
+                      Late Approvals
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -698,6 +797,8 @@ export const Attendance = () => {
                           const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
                           let totalWorkingDays = 0;
                           let presentDays = 0;
+                          let tourCount = 0;
+                          let lateApprovalCount = 0;
 
                           const cells = days.map((day) => {
                             const dateStr = format(day, 'yyyy-MM-dd');
@@ -722,7 +823,7 @@ export const Attendance = () => {
                               if (record.is_tour === 1) {
                                 if (record.tour_approval_status === 'approved') {
                                   statusText = 'Tour (Approved)';
-                                  bgColor = 'bg-orange-400';
+                                  bgColor = 'bg-pink-400';
                                 } else {
                                   // Non-approved or rejected tour
                                   statusText = 'Tour (Pending)';
@@ -758,7 +859,21 @@ export const Attendance = () => {
                                 record?.status === 'Present' ||
                                 record?.status === 'Late';
                               if (countsAsPresent) presentDays += 1;
+                              
+                              // Count tours
+                              if (record?.is_tour === 1 && record?.tour_approval_status === 'approved') {
+                                tourCount += 1;
+                              }
+                              
+                              // Count approved late punch-ins
+                              if (record?.status === 'Present' && record?.status !== 'Late') {
+                                // This would be marked as Present due to approved late punch-in
+                                // We need to check for pending approval status
+                              }
                             }
+                          
+                          // Get late approval count for this employee for this month
+                          lateApprovalCount = lateApprovals[empData.employee_id]?.count || 0;
                             
                             return (
                               <td
@@ -778,6 +893,12 @@ export const Attendance = () => {
                               {cells}
                               <td className="p-2 border border-gray-200 text-center bg-gray-50 font-semibold text-gray-900 whitespace-nowrap">
                                 {presentDays} / {totalWorkingDays}
+                              </td>
+                              <td className="p-2 border border-gray-200 text-center bg-gray-50 font-semibold text-pink-600 whitespace-nowrap">
+                                {tourCount}
+                              </td>
+                              <td className="p-2 border border-gray-200 text-center bg-gray-50 font-semibold text-green-600 whitespace-nowrap">
+                                {lateApprovalCount}
                               </td>
                             </>
                           );
@@ -1054,6 +1175,174 @@ export const Attendance = () => {
                             variant="outline"
                             className="border-red-300 text-red-700 hover:bg-red-50 h-8"
                             onClick={() => handleTourApprove(row.id, 'rejected')}
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            Reject
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Late Punch-In Requests - Admin */}
+      {user?.role === 'Admin' && activeTab === 'latepunchin' && (
+        <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Late Punch-In Approval Requests</h3>
+              <p className="text-sm text-gray-600">Employees who punched in after 10:30 AM</p>
+            </div>
+            <Button 
+              size="sm" 
+              className="bg-blue-600 text-white hover:bg-blue-700"
+              onClick={fetchLatePunchInRequests}
+              disabled={latePunchInLoading}
+            >
+              {latePunchInLoading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+
+          {latePunchInLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : latePunchInRequests.length === 0 ? (
+            <p className="text-center py-8 text-gray-500">No pending late punch-in requests.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50">
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Employee</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Punch In Time</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Minutes Late</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Requested</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {latePunchInRequests.map((req) => (
+                    <tr key={req.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                      <td className="py-3 px-4 font-mono text-gray-900">{req.punch_in_date}</td>
+                      <td className="py-3 px-4">
+                        <span className="font-medium text-gray-900">{req.employee_name}</span>
+                        <span className="text-xs text-gray-500 block">{req.employee_id}</span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-gray-700">{req.punch_in_time}</td>
+                      <td className="py-3 px-4">
+                        <span className="inline-block px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-700">
+                          {req.minutes_late} min
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-gray-500">
+                        {new Date(req.requested_at).toLocaleString()}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700 text-white h-8"
+                            onClick={() => handleApproveLatePunchIn(req.id, 'Approved')}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-red-300 text-red-700 hover:bg-red-50 h-8"
+                            onClick={() => handleApproveLatePunchIn(req.id, 'Rejected')}
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            Reject
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Late Punch-Out Requests - Admin */}
+      {user?.role === 'Admin' && activeTab === 'latepunchout' && (
+        <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Late Punch-Out Approval Requests</h3>
+              <p className="text-sm text-gray-600">Employees who punched out after 7:00 PM</p>
+            </div>
+            <Button 
+              size="sm" 
+              className="bg-blue-600 text-white hover:bg-blue-700"
+              onClick={fetchLatePunchOutRequests}
+              disabled={latePunchOutLoading}
+            >
+              {latePunchOutLoading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+
+          {latePunchOutLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : latePunchOutRequests.length === 0 ? (
+            <p className="text-center py-8 text-gray-500">No pending late punch-out requests.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50">
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Employee</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Punch Out Time</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Minutes Late</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Requested</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {latePunchOutRequests.map((req) => (
+                    <tr key={req.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                      <td className="py-3 px-4 font-mono text-gray-900">{req.punch_out_date}</td>
+                      <td className="py-3 px-4">
+                        <span className="font-medium text-gray-900">{req.employee_name}</span>
+                        <span className="text-xs text-gray-500 block">{req.employee_id}</span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-gray-700">{req.punch_out_time}</td>
+                      <td className="py-3 px-4">
+                        <span className="inline-block px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-700">
+                          {req.minutes_late} min
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-gray-500">
+                        {new Date(req.requested_at).toLocaleString()}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700 text-white h-8"
+                            onClick={() => handleApproveLatePunchOut(req.id, 'Approved')}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-red-300 text-red-700 hover:bg-red-50 h-8"
+                            onClick={() => handleApproveLatePunchOut(req.id, 'Rejected')}
                           >
                             <X className="h-4 w-4 mr-1" />
                             Reject
