@@ -58,7 +58,9 @@ const CGWFlowMetre = () => {
       item.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.equipment_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.location?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.inventory_id.toLowerCase().includes(searchTerm.toLowerCase())
+      item.inventory_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.product_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.model_no?.toLowerCase().includes(searchTerm.toLowerCase())
     );
     setFilteredItems(filtered);
   }, [searchTerm, items]);
@@ -289,15 +291,6 @@ const CGWFlowMetre = () => {
       });
     }
   };
-
-  // Group items by customer
-  const groupedByCustomer = filteredItems.reduce((acc, item) => {
-    if (!acc[item.customer_name]) {
-      acc[item.customer_name] = [];
-    }
-    acc[item.customer_name].push(item);
-    return acc;
-  }, {});
 
   const canManage = ['Admin', 'HR'].includes(user?.role);
 
@@ -676,104 +669,116 @@ const CGWFlowMetre = () => {
         </div>
       </Card>
 
-      {/* Items Grouped by Customer */}
-      {Object.keys(groupedByCustomer).length > 0 ? (
-        Object.keys(groupedByCustomer).map((customerName) => (
-          <div key={customerName} className="space-y-3">
-            <div className="px-4 py-2 bg-blue-50 border-l-4 border-blue-600">
-              <h2 className="text-lg font-semibold text-blue-900">{customerName}</h2>
-              <p className="text-sm text-blue-700">{groupedByCustomer[customerName].length} item(s)</p>
-            </div>
-
-            <Card className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <div className="overflow-x-auto table-scroll">
-                <table className="w-full text-sm min-w-[800px]">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">ID</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Equipment</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Product Code</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Model No</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Location</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Contact</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Email</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Commissioned</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                      {canManage && (
-                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedByCustomer[customerName].map((item) => (
-                      <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50/50">
-                        <td className="py-3 px-4 font-mono text-gray-900">{item.inventory_id}</td>
-                        <td className="py-3 px-4 font-medium text-gray-900">{item.equipment_name || '—'}</td>
-                        <td className="py-3 px-4 text-gray-600">{item.product_code || '—'}</td>
-                        <td className="py-3 px-4 text-gray-600">{item.model_no || '—'}</td>
-                        <td className="py-3 px-4 text-gray-600">{item.location || '—'}</td>
-                        <td className="py-3 px-4 text-gray-600">
-                          {item.person_mobile_number ? (
-                            <span className="flex items-center gap-1.5">
-                              <Phone className="h-3.5 w-3 text-gray-400 shrink-0" />
-                              {item.person_mobile_number}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-gray-600">
-                          {item.email_id ? (
-                            <span className="flex items-center gap-1.5">
-                              <Mail className="h-3.5 w-3 text-gray-400 shrink-0" />
-                              <span className="truncate max-w-[120px]" title={item.email_id}>{item.email_id}</span>
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-gray-600">{item.date_of_commissioning || '—'}</td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-medium ${
-                            item.status === 'Active' ? 'bg-green-50 text-green-700' :
-                            item.status === 'Maintenance' ? 'bg-yellow-50 text-yellow-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>
-                            {item.status}
-                          </span>
-                        </td>
-                        {canManage && (
-                          <td className="py-3 px-4">
-                            <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 border-gray-200 text-gray-700 hover:bg-gray-50"
-                                onClick={() => handleEdit(item)}
-                              >
-                                <Edit className="h-3.5 w-3 mr-1" />
-                                Edit
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 border-gray-200 text-red-600 hover:bg-red-50"
-                                onClick={() => handleDelete(item.id)}
-                              >
-                                <Trash2 className="h-3.5 w-3 mr-1" />
-                                Delete
-                              </Button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
+      {/* Excel-like Grid */}
+      {filteredItems.length > 0 ? (
+        <Card className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-x-auto table-scroll">
+            <table className="w-full text-sm min-w-[2200px]">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-100">
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">SL NO</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">CUSTOMER NAME</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">LOCATION</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">CONTACT PERSON</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">NAME OF EQUIPMENT</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">FLOWMETER/PIEZOMETER DETAILS</th>
+                  <th colSpan="2" className="text-center py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">TELEMETRIC SYSTEM</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">SYSTEM MOBILE NUMBER</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">PERSON MOBILE NUMBER</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">EMAIL ID</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">DATE OF COMMISSONING</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">URL LINK</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">USER ID</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">PASSWORD</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">STATUS</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">RENEWAL DATE WILL BE</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">REVIEW</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">CALIBARATION CERTIFICATE</th>
+                  <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">REMARKS</th>
+                  {canManage && (
+                    <th rowSpan="2" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap">ACTIONS</th>
+                  )}
+                </tr>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="text-left py-2 px-4 font-semibold text-gray-700 whitespace-nowrap">PRODUCT CODE</th>
+                  <th className="text-left py-2 px-4 font-semibold text-gray-700 whitespace-nowrap">MODEL NO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item, index) => (
+                  <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50/50 align-top">
+                    <td className="py-3 px-4 text-gray-900 whitespace-nowrap">{index + 1}</td>
+                    <td className="py-3 px-4 font-medium text-gray-900 whitespace-nowrap">{item.customer_name || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.location || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.contact_person || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.equipment_name || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 min-w-[220px]">{item.flowmeter_details || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.product_code || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.model_no || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.system_mobile_number || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">
+                      {item.person_mobile_number ? (
+                        <span className="flex items-center gap-1.5">
+                          <Phone className="h-3.5 w-3 text-gray-400 shrink-0" />
+                          {item.person_mobile_number}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="py-3 px-4 text-gray-600 min-w-[220px]">
+                      {item.email_id ? (
+                        <span className="flex items-center gap-1.5">
+                          <Mail className="h-3.5 w-3 text-gray-400 shrink-0" />
+                          <span>{item.email_id}</span>
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.date_of_commissioning || '—'}</td>
+                    <td className="py-3 px-4 text-blue-700 min-w-[180px] break-all">{item.url_link || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.user_id || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.password || '—'}</td>
+                    <td className="py-3 px-4">
+                      <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap ${
+                        item.status === 'Active' ? 'bg-green-50 text-green-700' :
+                        item.status === 'Maintenance' ? 'bg-yellow-50 text-yellow-700' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>
+                        {item.status || '—'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">{item.renewal_date || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 min-w-[220px]">{item.review || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 min-w-[220px]">{item.calibration_certificate || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600 min-w-[220px]">{item.remarks || '—'}</td>
+                    {canManage && (
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 border-gray-200 text-gray-700 hover:bg-gray-50"
+                            onClick={() => handleEdit(item)}
+                          >
+                            <Edit className="h-3.5 w-3 mr-1" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 border-gray-200 text-red-600 hover:bg-red-50"
+                            onClick={() => handleDelete(item.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))
+        </Card>
       ) : (
         <Card className="p-12 text-center rounded-lg border border-gray-200 bg-white shadow-sm">
           <p className="text-gray-600">No inventory items found</p>

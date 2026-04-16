@@ -966,6 +966,49 @@ def migrate_leaves_add_attachment():
 
 migrate_leaves_add_attachment()
 
+def migrate_cgw_flow_metres_product_columns():
+    """Add product_code/model_no to cgw_flow_metres and backfill from telemetric_system."""
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('cgw_flow_metres')]
+
+        with engine.connect() as conn:
+            if 'product_code' not in existing_columns:
+                try:
+                    conn.execute(text("ALTER TABLE cgw_flow_metres ADD COLUMN product_code VARCHAR(100) NULL"))
+                    conn.commit()
+                except Exception as alter_err:
+                    print(f"Could not add column product_code: {alter_err}")
+                    conn.rollback()
+
+            if 'model_no' not in existing_columns:
+                try:
+                    conn.execute(text("ALTER TABLE cgw_flow_metres ADD COLUMN model_no VARCHAR(100) NULL"))
+                    conn.commit()
+                except Exception as alter_err:
+                    print(f"Could not add column model_no: {alter_err}")
+                    conn.rollback()
+
+            # Preserve previously imported data that lived in the old single column.
+            if 'telemetric_system' in existing_columns:
+                try:
+                    conn.execute(text("""
+                        UPDATE cgw_flow_metres
+                        SET product_code = telemetric_system
+                        WHERE (product_code IS NULL OR product_code = '')
+                          AND telemetric_system IS NOT NULL
+                          AND telemetric_system <> ''
+                    """))
+                    conn.commit()
+                except Exception as update_err:
+                    print(f"Could not backfill product_code from telemetric_system: {update_err}")
+                    conn.rollback()
+    except Exception as e:
+        print(f"Migration error for cgw_flow_metres product columns: {e}")
+
+migrate_cgw_flow_metres_product_columns()
+
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
     "dashboard", "leads", "employees", "attendance", "leaves", "expenses",
@@ -2722,35 +2765,69 @@ def import_cgw_from_excel(
         raise HTTPException(status_code=403, detail='Not authorized')
     
     try:
-        # Read Excel file
+        # Read Excel file. This workbook uses a two-row header where
+        # "TELEMETRIC SYSTEM" expands into PRODUCT CODE / MODEL NO.
         contents = file.file.read()
         df = pd.read_excel(io.BytesIO(contents))
-        
-        # Column mapping from Excel headers to database fields
-        column_mapping = {
-            'CUSTOMER NAME': 'customer_name',
-            'LOCATION': 'location',
-            'CONTACT PERSON': 'contact_person',
-            'NAME OF EQUIPMENT': 'equipment_name',
-            'FLOWMETER/PIEZOMETER DETAILS': 'flowmeter_details',
-            # Template header maps to DB `product_code`
-            'TELEMETRIC SYSTEM': 'product_code',
-            'SYSTEM MOBILE NUMBER': 'system_mobile_number',
-            'PERSON MOBILE NUMBER': 'person_mobile_number',
-            'EMAIL ID': 'email_id',
-            'DATE OF COMMISSONING': 'date_of_commissioning',
-            'URL LINK': 'url_link',
-            'USER ID': 'user_id',
-            'PASSWORD': 'password',
-            'STATUS': 'status',
-            'RENEWAL DATE WILL BE': 'renewal_date',
-            'REVIEW': 'review',
-            'CALIBARATION CERTIFICATE': 'calibration_certificate',
-            'REMARKS': 'remarks'
-        }
-        
-        # Normalize column names (strip whitespace)
-        df.columns = df.columns.str.strip()
+        df.columns = [str(col).strip() for col in df.columns]
+        df = df.rename(columns={
+            'Unnamed: 7': 'MODEL NO',
+            'Unnamed: 20': 'EXTRA_NOTES',
+        })
+
+        # Drop the second header row embedded inside the sheet body.
+        if not df.empty and str(df.iloc[0].get('TELEMETRIC SYSTEM', '')).strip().upper() == 'PRODUCT CODE':
+            df = df.iloc[1:].copy()
+
+        inherited_columns = [
+            'SL NO',
+            'CUSTOMER NAME',
+            'LOCATION',
+            'CONTACT PERSON',
+            'SYSTEM MOBILE NUMBER',
+            'PERSON MOBILE NUMBER',
+            'EMAIL ID',
+            'DATE OF COMMISSONING',
+            'URL LINK',
+            'USER ID',
+            'PASSWORD',
+            'STATUS',
+            'RENEWAL DATE WILL BE',
+            'REVIEW',
+            'CALIBARATION CERTIFICATE',
+        ]
+        for col in inherited_columns:
+            if col in df.columns:
+                df[col] = df[col].ffill()
+
+        def clean_cell(value):
+            if pd.isna(value):
+                return None
+            text_value = str(value).strip()
+            return text_value or None
+
+        def clean_date(value):
+            if pd.isna(value):
+                return None
+            if isinstance(value, pd.Timestamp):
+                return value.strftime('%Y-%m-%d')
+            text_value = str(value).strip()
+            if not text_value:
+                return None
+            parsed = pd.to_datetime(text_value, errors='coerce')
+            if pd.isna(parsed):
+                return text_value
+            return parsed.strftime('%Y-%m-%d')
+
+        max_inv_num = db.query(
+            func.max(cast(func.substr(CGWFlowMetreModel.inventory_id, 4), Integer))
+        ).scalar()
+        next_inv_num = (max_inv_num or 0) + 1
+
+        max_cust_num = db.query(
+            func.max(cast(func.substr(CustomerModel.customer_id, 5), Integer))
+        ).scalar()
+        next_cust_num = (max_cust_num or 0) + 1
         
         imported_count = 0
         failed_count = 0
@@ -2758,56 +2835,57 @@ def import_cgw_from_excel(
         
         for index, row in df.iterrows():
             try:
-                # Get or verify customer exists
-                customer_name = str(row.get('CUSTOMER NAME', '')).strip()
+                customer_name = clean_cell(row.get('CUSTOMER NAME'))
                 if not customer_name:
                     errors.append(f"Row {index + 2}: Missing customer name")
                     failed_count += 1
                     continue
                 
-                # Find customer by name
                 customer = db.query(CustomerModel).filter(
                     CustomerModel.company_name == customer_name
                 ).first()
-                
+
                 if not customer:
-                    errors.append(f"Row {index + 2}: Customer '{customer_name}' not found in database")
-                    failed_count += 1
-                    continue
-                
-                # Generate inventory_id
-                max_inv_num = db.query(
-                    func.max(cast(func.substr(CGWFlowMetreModel.inventory_id, 4), Integer))
-                ).scalar()
-                next_inv_num = (max_inv_num or 0) + 1
+                    customer = CustomerModel(
+                        customer_id=f'CUST{str(next_cust_num).zfill(5)}',
+                        company_name=customer_name,
+                        contact_person_name=clean_cell(row.get('CONTACT PERSON')) or customer_name,
+                        phone=clean_cell(row.get('PERSON MOBILE NUMBER')),
+                        email=clean_cell(row.get('EMAIL ID')),
+                        address_line=clean_cell(row.get('LOCATION')),
+                        status='Active'
+                    )
+                    next_cust_num += 1
+                    db.add(customer)
+                    db.flush()
+
                 inv_id = f'INV{str(next_inv_num).zfill(4)}'
+                next_inv_num += 1
                 
-                # Prepare data
                 data = {
                     'inventory_id': inv_id,
                     'customer_id': customer.id,
                     'customer_name': customer_name,
-                    'location': str(row.get('LOCATION', '')).strip() or None,
-                    'contact_person': str(row.get('CONTACT PERSON', '')).strip() or None,
-                    'equipment_name': str(row.get('NAME OF EQUIPMENT', '')).strip() or None,
-                    'flowmeter_details': str(row.get('FLOWMETER/PIEZOMETER DETAILS', '')).strip() or None,
-                    # Template column is 'TELEMETRIC SYSTEM' but the DB field is `product_code`.
-                    'product_code': str(row.get('TELEMETRIC SYSTEM', '')).strip() or None,
-                    'system_mobile_number': str(row.get('SYSTEM MOBILE NUMBER', '')).strip() or None,
-                    'person_mobile_number': str(row.get('PERSON MOBILE NUMBER', '')).strip() or None,
-                    'email_id': str(row.get('EMAIL ID', '')).strip() or None,
-                    'date_of_commissioning': str(row.get('DATE OF COMMISSONING', '')).strip() or None,
-                    'url_link': str(row.get('URL LINK', '')).strip() or None,
-                    'user_id': str(row.get('USER ID', '')).strip() or None,
-                    'password': str(row.get('PASSWORD', '')).strip() or None,
-                    'status': str(row.get('STATUS', 'Active')).strip() or 'Active',
-                    'renewal_date': str(row.get('RENEWAL DATE WILL BE', '')).strip() or None,
-                    'review': str(row.get('REVIEW', '')).strip() or None,
-                    'calibration_certificate': str(row.get('CALIBARATION CERTIFICATE', '')).strip() or None,
-                    'remarks': str(row.get('REMARKS', '')).strip() or None
+                    'location': clean_cell(row.get('LOCATION')),
+                    'contact_person': clean_cell(row.get('CONTACT PERSON')),
+                    'equipment_name': clean_cell(row.get('NAME OF EQUIPMENT')),
+                    'flowmeter_details': clean_cell(row.get('FLOWMETER/PIEZOMETER DETAILS')),
+                    'product_code': clean_cell(row.get('TELEMETRIC SYSTEM')),
+                    'model_no': clean_cell(row.get('MODEL NO')),
+                    'system_mobile_number': clean_cell(row.get('SYSTEM MOBILE NUMBER')),
+                    'person_mobile_number': clean_cell(row.get('PERSON MOBILE NUMBER')),
+                    'email_id': clean_cell(row.get('EMAIL ID')),
+                    'date_of_commissioning': clean_date(row.get('DATE OF COMMISSONING')),
+                    'url_link': clean_cell(row.get('URL LINK')),
+                    'user_id': clean_cell(row.get('USER ID')),
+                    'password': clean_cell(row.get('PASSWORD')),
+                    'status': clean_cell(row.get('STATUS')) or 'Active',
+                    'renewal_date': clean_date(row.get('RENEWAL DATE WILL BE')),
+                    'review': clean_cell(row.get('REVIEW')),
+                    'calibration_certificate': clean_cell(row.get('CALIBARATION CERTIFICATE')),
+                    'remarks': clean_cell(row.get('REMARKS')) or clean_cell(row.get('EXTRA_NOTES')),
                 }
-                
-                # Create new item
+
                 new_item = CGWFlowMetreModel(**data)
                 db.add(new_item)
                 imported_count += 1
