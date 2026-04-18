@@ -2828,13 +2828,13 @@ def update_customer(customer_id: str, cust_data: CustomerCreateUpdate, current_u
 
 
 @api_router.post('/customers/{customer_id}/attachments', response_model=List[CustomerAttachment])
-async def upload_customer_pdf_attachment(
+def upload_customer_pdf_attachment(
     customer_id: str,
     file: UploadFile = File(...),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Upload one PDF attachment for a customer (call multiple times for multiple files)."""
+    """Upload one PDF to S3 and append URL to customer.attachments_json (same pattern as /documents/upload)."""
     customer = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail='Customer not found')
@@ -2844,21 +2844,20 @@ async def upload_customer_pdf_attachment(
     if not fn_lower.endswith('.pdf'):
         raise HTTPException(status_code=400, detail='Only PDF files are allowed')
 
-    file_content = await file.read()
+    file_content = file.file.read()
     if len(file_content) > 25 * 1024 * 1024:
         raise HTTPException(status_code=400, detail='PDF must be 25 MB or smaller')
 
     safe_base = Path(file.filename).name.replace('..', '_').replace('/', '_') or 'document.pdf'
-    new_filename = f'cust_{customer_id[:8]}_{uuid.uuid4().hex}.pdf'
+    new_filename = f'customer_{uuid.uuid4().hex}.pdf'
 
+    # S3 required (no local fallback) — same as document upload
     attachment_url = upload_to_s3(file_content, new_filename, folder='customers')
     if not attachment_url:
-        upload_folder = UPLOAD_DIR / 'customers'
-        upload_folder.mkdir(parents=True, exist_ok=True)
-        file_path = upload_folder / new_filename
-        with open(file_path, 'wb') as f:
-            f.write(file_content)
-        attachment_url = f'/uploads/customers/{new_filename}'
+        raise HTTPException(
+            status_code=503,
+            detail='File upload service is temporarily unavailable. Please try again in a few moments.',
+        )
 
     items = _customer_attachments_from_db(customer)
     att_id = str(uuid.uuid4())

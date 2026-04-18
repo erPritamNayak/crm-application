@@ -11,7 +11,7 @@ import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X, FileText
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
-const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
+const authHeaders = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
 /** Build absolute URL for uploaded PDFs or S3 links */
 const attachmentHref = (url) => {
@@ -28,7 +28,8 @@ export const Customers = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const fileInputRef = useRef(null);
-  const [uploadTargetCustomerId, setUploadTargetCustomerId] = useState(null);
+  /** Must be a ref: state updates after click() so onChange would see null if we used useState. */
+  const uploadTargetCustomerIdRef = useRef(null);
   const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false);
   const [attachmentCustomer, setAttachmentCustomer] = useState(null);
   const [selectedPdfUrl, setSelectedPdfUrl] = useState('');
@@ -67,7 +68,7 @@ export const Customers = () => {
 
   const fetchCustomers = async () => {
     try {
-      const response = await axios.get(`${API}/customers`, { headers: authHeader() });
+      const response = await axios.get(`${API}/customers`, authHeaders());
       setCustomers(response.data);
       setFilteredCustomers(response.data);
     } catch (error) {
@@ -85,15 +86,15 @@ export const Customers = () => {
   };
 
   const triggerPdfUpload = (customerId) => {
-    setUploadTargetCustomerId(customerId);
+    uploadTargetCustomerIdRef.current = customerId;
     fileInputRef.current?.click();
   };
 
   const handlePdfFilesSelected = async (e) => {
     const files = e.target.files;
-    const targetId = uploadTargetCustomerId;
+    const targetId = uploadTargetCustomerIdRef.current;
+    uploadTargetCustomerIdRef.current = null;
     e.target.value = '';
-    setUploadTargetCustomerId(null);
     if (!targetId || !files?.length) return;
 
     const list = Array.from(files);
@@ -108,14 +109,12 @@ export const Customers = () => {
       for (const file of list) {
         const fd = new FormData();
         fd.append('file', file);
-        await axios.post(`${API}/customers/${targetId}/attachments`, fd, {
-          headers: authHeader(),
-        });
+        await axios.post(`${API}/customers/${targetId}/attachments`, fd, authHeaders());
       }
-      toast.success(list.length > 1 ? `${list.length} PDFs uploaded` : 'PDF uploaded');
+      toast.success(list.length > 1 ? `${list.length} NOC PDFs uploaded` : 'NOC PDF uploaded');
       await fetchCustomers();
       if (attachmentCustomer?.id === targetId) {
-        const refreshed = (await axios.get(`${API}/customers`, { headers: authHeader() })).data.find((c) => c.id === targetId);
+        const refreshed = (await axios.get(`${API}/customers`, authHeaders())).data.find((c) => c.id === targetId);
         if (refreshed) {
           setAttachmentCustomer(refreshed);
           const atts = refreshed.attachments || [];
@@ -132,11 +131,11 @@ export const Customers = () => {
   const deleteCustomerAttachment = async (customerId, attachmentId) => {
     if (!window.confirm('Remove this PDF attachment?')) return;
     try {
-      await axios.delete(`${API}/customers/${customerId}/attachments/${attachmentId}`, { headers: authHeader() });
+      await axios.delete(`${API}/customers/${customerId}/attachments/${attachmentId}`, authHeaders());
       toast.success('Attachment removed');
       await fetchCustomers();
       if (attachmentCustomer?.id === customerId) {
-        const refreshed = (await axios.get(`${API}/customers`, { headers: authHeader() })).data.find((c) => c.id === customerId);
+        const refreshed = (await axios.get(`${API}/customers`, authHeaders())).data.find((c) => c.id === customerId);
         setAttachmentCustomer(refreshed || null);
         const atts = refreshed?.attachments || [];
         setSelectedPdfUrl(atts.length ? attachmentHref(atts[0].url) : '');
@@ -180,10 +179,10 @@ export const Customers = () => {
       };
 
       if (editingCustomer) {
-        await axios.put(`${API}/customers/${editingCustomer.id}`, dataToSubmit, { headers: authHeader() });
+        await axios.put(`${API}/customers/${editingCustomer.id}`, dataToSubmit, authHeaders());
         toast.success('Customer updated successfully');
       } else {
-        await axios.post(`${API}/customers`, dataToSubmit, { headers: authHeader() });
+        await axios.post(`${API}/customers`, dataToSubmit, authHeaders());
         toast.success('Customer added successfully');
       }
       setDialogOpen(false);
@@ -201,7 +200,7 @@ export const Customers = () => {
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this customer?')) return;
     try {
-      await axios.delete(`${API}/customers/${id}`, { headers: authHeader() });
+      await axios.delete(`${API}/customers/${id}`, authHeaders());
       toast.success('Customer deleted successfully');
       fetchCustomers();
     } catch (error) {
@@ -590,12 +589,12 @@ export const Customers = () => {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Customer ID</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Company Name</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700 min-w-[200px]">NOC</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Contact Person</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Phone</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Email</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">GST Number</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">City</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700 min-w-[200px]">Attachments</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
               </tr>
@@ -609,6 +608,36 @@ export const Customers = () => {
                 >
                   <td className="py-3 px-4 font-mono text-gray-900">{customer.customer_id}</td>
                   <td className="py-3 px-4 font-medium text-gray-900">{customer.company_name}</td>
+                  <td className="py-3 px-4 align-top">
+                    <div className="flex flex-col gap-2 min-w-[180px]">
+                      <span className="text-xs text-gray-500">
+                        {(customer.attachments && customer.attachments.length) || 0} NOC PDF{(customer.attachments?.length || 0) !== 1 ? 's' : ''}
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          disabled={!customer.attachments?.length}
+                          onClick={() => openAttachmentDialog(customer)}
+                        >
+                          <FileText className="h-3.5 w-3.5 mr-1" />
+                          Preview
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 text-xs bg-blue-600 text-white hover:bg-blue-700"
+                          disabled={uploading}
+                          onClick={() => triggerPdfUpload(customer.id)}
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                          Add NOC
+                        </Button>
+                      </div>
+                    </div>
+                  </td>
                   <td className="py-3 px-4 text-gray-600">{customer.contact_person_name}</td>
                   <td className="py-3 px-4 text-gray-600">
                     {customer.phone ? (
@@ -632,36 +661,6 @@ export const Customers = () => {
                   </td>
                   <td className="py-3 px-4 text-gray-600 font-mono">{customer.gst_number || '—'}</td>
                   <td className="py-3 px-4 text-gray-600">{customer.city || '—'}</td>
-                  <td className="py-3 px-4 align-top">
-                    <div className="flex flex-col gap-2 min-w-[180px]">
-                      <span className="text-xs text-gray-500">
-                        {(customer.attachments && customer.attachments.length) || 0} PDF{(customer.attachments?.length || 0) !== 1 ? 's' : ''}
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs"
-                          disabled={!customer.attachments?.length}
-                          onClick={() => openAttachmentDialog(customer)}
-                        >
-                          <FileText className="h-3.5 w-3.5 mr-1" />
-                          Preview
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 text-xs bg-blue-600 text-white hover:bg-blue-700"
-                          disabled={uploading}
-                          onClick={() => triggerPdfUpload(customer.id)}
-                        >
-                          <Plus className="h-3.5 w-3.5 mr-1" />
-                          Add PDF
-                        </Button>
-                      </div>
-                    </div>
-                  </td>
                   <td className="py-3 px-4">
                     <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-medium ${
                       customer.status === 'Active' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'
@@ -730,14 +729,14 @@ export const Customers = () => {
             <DialogHeader>
               <DialogTitle className="text-lg font-semibold text-white flex items-center gap-2">
                 <FileText className="h-5 w-5" />
-                {attachmentCustomer ? `${attachmentCustomer.company_name} — PDF attachments` : 'Attachments'}
+                {attachmentCustomer ? `${attachmentCustomer.company_name} — NOC (PDF)` : 'NOC'}
               </DialogTitle>
             </DialogHeader>
           </div>
           <div className="p-4 flex-1 min-h-0 flex flex-col md:flex-row gap-4 overflow-hidden">
             <div className="md:w-56 shrink-0 border border-gray-200 rounded-lg overflow-y-auto max-h-[60vh]">
               {(attachmentCustomer?.attachments || []).length === 0 ? (
-                <p className="p-3 text-sm text-gray-500">No PDFs yet. Use Add PDF on the customer row.</p>
+                <p className="p-3 text-sm text-gray-500">No NOC files yet. Use Add NOC on the customer row.</p>
               ) : (
                 <ul className="divide-y divide-gray-100">
                   {(attachmentCustomer?.attachments || []).map((att) => (
@@ -776,7 +775,7 @@ export const Customers = () => {
             <div className="flex-1 min-h-0 flex flex-col border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
               {selectedPdfUrl ? (
                 <iframe
-                  title="PDF preview"
+                  title="NOC PDF preview"
                   src={selectedPdfUrl}
                   className="w-full flex-1 min-h-[420px] bg-white"
                 />
