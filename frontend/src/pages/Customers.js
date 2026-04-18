@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X, FileText, ExternalLink } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -71,8 +72,10 @@ export const Customers = () => {
       const response = await axios.get(`${API}/customers`, authHeaders());
       setCustomers(response.data);
       setFilteredCustomers(response.data);
+      return response.data;
     } catch (error) {
       toast.error('Failed to load customers');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -106,15 +109,22 @@ export const Customers = () => {
 
     setUploading(true);
     try {
+      let lastAttachments = null;
       for (const file of list) {
         const fd = new FormData();
         fd.append('file', file);
-        await axios.post(`${API}/customers/${targetId}/attachments`, fd, authHeaders());
+        const { data } = await axios.post(`${API}/customers/${targetId}/attachments`, fd, authHeaders());
+        lastAttachments = data;
       }
       toast.success(list.length > 1 ? `${list.length} NOC PDFs uploaded` : 'NOC PDF uploaded');
-      await fetchCustomers();
-      if (attachmentCustomer?.id === targetId) {
-        const refreshed = (await axios.get(`${API}/customers`, authHeaders())).data.find((c) => c.id === targetId);
+      if (lastAttachments) {
+        setCustomers((prev) =>
+          prev.map((c) => (c.id === targetId ? { ...c, attachments: lastAttachments } : c))
+        );
+      }
+      const allCustomers = await fetchCustomers();
+      if (attachmentCustomer?.id === targetId && allCustomers) {
+        const refreshed = allCustomers.find((c) => c.id === targetId);
         if (refreshed) {
           setAttachmentCustomer(refreshed);
           const atts = refreshed.attachments || [];
@@ -133,9 +143,9 @@ export const Customers = () => {
     try {
       await axios.delete(`${API}/customers/${customerId}/attachments/${attachmentId}`, authHeaders());
       toast.success('Attachment removed');
-      await fetchCustomers();
-      if (attachmentCustomer?.id === customerId) {
-        const refreshed = (await axios.get(`${API}/customers`, authHeaders())).data.find((c) => c.id === customerId);
+      const allCustomers = await fetchCustomers();
+      if (attachmentCustomer?.id === customerId && allCustomers) {
+        const refreshed = allCustomers.find((c) => c.id === customerId);
         setAttachmentCustomer(refreshed || null);
         const atts = refreshed?.attachments || [];
         setSelectedPdfUrl(atts.length ? attachmentHref(atts[0].url) : '');
@@ -724,17 +734,25 @@ export const Customers = () => {
           }
         }}
       >
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-white rounded-lg border border-gray-200 shadow-xl p-0">
-          <div className="bg-slate-800 text-white p-4 shrink-0">
-            <DialogHeader>
-              <DialogTitle className="text-lg font-semibold text-white flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                {attachmentCustomer ? `${attachmentCustomer.company_name} — NOC (PDF)` : 'NOC'}
+        <DialogContent
+          className={cn(
+            'flex flex-col gap-0 p-0 overflow-hidden border-0 bg-white',
+            'h-[100dvh] w-screen max-w-none max-h-[100dvh] rounded-none shadow-xl',
+            'left-0 top-0 translate-x-0 translate-y-0 sm:max-w-none sm:rounded-none sm:max-h-[100dvh]'
+          )}
+        >
+          <div className="bg-slate-800 text-white px-4 py-3 pr-14 shrink-0 flex items-center min-h-[52px] border-b border-slate-700">
+            <DialogHeader className="flex-1 space-y-0 text-left">
+              <DialogTitle className="text-base sm:text-lg font-semibold text-white flex items-center gap-2 truncate m-0">
+                <FileText className="h-5 w-5 shrink-0" />
+                <span className="truncate">
+                  {attachmentCustomer ? `${attachmentCustomer.company_name} — NOC (PDF)` : 'NOC'}
+                </span>
               </DialogTitle>
             </DialogHeader>
           </div>
-          <div className="p-4 flex-1 min-h-0 flex flex-col md:flex-row gap-4 overflow-hidden">
-            <div className="md:w-56 shrink-0 border border-gray-200 rounded-lg overflow-y-auto max-h-[60vh]">
+          <div className="flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
+            <aside className="max-h-[32vh] md:max-h-none md:h-auto md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 bg-white overflow-y-auto">
               {(attachmentCustomer?.attachments || []).length === 0 ? (
                 <p className="p-3 text-sm text-gray-500">No NOC files yet. Use Add NOC on the customer row.</p>
               ) : (
@@ -771,16 +789,18 @@ export const Customers = () => {
                   ))}
                 </ul>
               )}
-            </div>
-            <div className="flex-1 min-h-0 flex flex-col border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+            </aside>
+            <div className="relative flex-1 min-h-0 min-w-0 bg-neutral-900">
               {selectedPdfUrl ? (
                 <iframe
                   title="NOC PDF preview"
                   src={selectedPdfUrl}
-                  className="w-full flex-1 min-h-[420px] bg-white"
+                  className="absolute inset-0 h-full w-full border-0 bg-white"
                 />
               ) : (
-                <p className="p-8 text-center text-sm text-gray-500">Select a file to preview</p>
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+                  <p className="p-8 text-center text-sm text-gray-500">Select a file to preview</p>
+                </div>
               )}
             </div>
           </div>

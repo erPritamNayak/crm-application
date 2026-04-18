@@ -1326,7 +1326,8 @@ class CustomerAttachment(BaseModel):
 
 
 class Customer(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    # Required so FastAPI/Pydantic read ORM-only fields set on the instance (e.g. attachments, contacts).
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     customer_id: str
     company_name: str
