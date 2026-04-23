@@ -8,9 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from 'sonner';
 import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X, FileText, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const API = `${BACKEND_URL}/api`;
+const API = API_ENDPOINT;
 
 const authHeaders = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
@@ -18,7 +18,7 @@ const authHeaders = () => ({ headers: { Authorization: `Bearer ${localStorage.ge
 const attachmentHref = (url) => {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `${BACKEND_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  return `${BACKEND_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 
 export const Customers = () => {
@@ -89,16 +89,31 @@ export const Customers = () => {
   };
 
   const triggerPdfUpload = (customerId) => {
+    if (!customerId) {
+      toast.error('Missing customer id for upload.');
+      return;
+    }
     uploadTargetCustomerIdRef.current = customerId;
-    fileInputRef.current?.click();
+    const input = fileInputRef.current;
+    if (!input) return;
+    // Backup for browsers/timing where ref is cleared before onChange runs (also survives rapid row clicks).
+    input.dataset.nocCustomerId = customerId;
+    input.click();
   };
 
   const handlePdfFilesSelected = async (e) => {
-    const files = e.target.files;
-    const targetId = uploadTargetCustomerIdRef.current;
+    const input = e.target;
+    const files = input.files;
+    const targetId =
+      uploadTargetCustomerIdRef.current || (input && input.dataset?.nocCustomerId) || '';
     uploadTargetCustomerIdRef.current = null;
-    e.target.value = '';
-    if (!targetId || !files?.length) return;
+    if (input?.dataset) delete input.dataset.nocCustomerId;
+    input.value = '';
+    if (!files?.length) return;
+    if (!targetId) {
+      toast.error('Could not determine which customer to attach to. Click Add NOC again.');
+      return;
+    }
 
     const list = Array.from(files);
     const nonPdf = list.filter((f) => !f.name.toLowerCase().endsWith('.pdf'));
@@ -113,10 +128,18 @@ export const Customers = () => {
       for (const file of list) {
         const fd = new FormData();
         fd.append('file', file);
-        const { data } = await axios.post(`${API}/customers/${targetId}/attachments`, fd, authHeaders());
+        const { data } = await axios.post(`${API}/customers/${targetId}/attachments`, fd, {
+          ...authHeaders(),
+          timeout: 120000,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        });
         lastAttachments = data;
       }
-      toast.success(list.length > 1 ? `${list.length} NOC PDFs uploaded` : 'NOC PDF uploaded');
+      const uploadedMsg = list.length > 1 ? `${list.length} NOC PDFs uploaded` : 'NOC PDF uploaded';
+      toast.success(uploadedMsg, {
+        description: `NOCs are stored by POST /api/customers/{id}/attachments (not PUT /customers). In Network, filter "attachments" — your id starts with ${targetId.slice(0, 8)}.`,
+      });
       if (lastAttachments) {
         setCustomers((prev) =>
           prev.map((c) => (c.id === targetId ? { ...c, attachments: lastAttachments } : c))

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,11 +7,23 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Search, Mail, Phone, Filter, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Eye, Upload } from 'lucide-react';
+import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
+import { cn } from '@/lib/utils';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API = API_ENDPOINT;
+
+const CGW_MEDIA_KEYS = ['flow_meter', 'telemetry', 'service_report', 'calibration_certificate', 'tax_invoice'];
+const CGW_MEDIA_LABELS = {
+  flow_meter: 'Flow meter (photo)',
+  telemetry: 'Telemetry (photo)',
+  service_report: 'Service report (photo)',
+  calibration_certificate: 'Calibration certificate (photo)',
+  tax_invoice: 'Tax invoice (photo)',
+};
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+/** When true, shows the “Daily past-due renewal email” admin card (CGW inventory). */
+const SHOW_CGW_DIGEST_EMAIL_SECTION = false;
 const EMPTY_EQUIPMENT_ROW = {
   equipment_name: '',
   flowmeter_details: '',
@@ -126,9 +138,38 @@ function renewalUrgency(renewalDateRaw) {
   return 'ok';
 }
 
-function RenewalDateCell({ groupEditActive, inlineEditData, groupAnchor, onChange }) {
+function nocValidUrgency(isoDateRaw) {
+  return renewalUrgency(isoDateRaw);
+}
+
+function RenewalDateCell({ groupEditActive, inlineEditData, groupAnchor, onChange, groupRows = [] }) {
   const rawForUrgency = groupEditActive ? inlineEditData.renewal_date : groupAnchor.renewal_date;
   const urgency = renewalUrgency(rawForUrgency);
+  const nocBlock = (groupRows || []).some((r) => r.noc_valid_upto) ? (
+    <div className="mt-1.5 pt-1 border-t border-gray-200/80 space-y-0.5">
+      <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-wide">NOC valid up to</p>
+      {(groupRows || []).map((r) => {
+        const v = r.noc_valid_upto;
+        if (!v) return null;
+        const nu = nocValidUrgency(v);
+        const label = (r.equipment_name || r.inventory_id || 'Row').slice(0, 18);
+        return (
+          <div key={r.id} className="text-[10px] leading-tight">
+            <span className="text-gray-500">{label}:</span>{' '}
+            <span
+              className={`font-mono tabular-nums ${
+                nu === 'overdue' ? 'text-red-600 font-bold' : nu === 'dueSoon' ? 'text-amber-800 font-medium' : 'text-gray-800'
+              }`}
+            >
+              {v}
+            </span>
+            {nu === 'overdue' && <span className="ml-0.5 text-red-600 font-bold">(expired)</span>}
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
+
   if (groupEditActive) {
     return (
       <div className="flex flex-col gap-0.5 min-w-[108px]">
@@ -144,6 +185,7 @@ function RenewalDateCell({ groupEditActive, inlineEditData, groupAnchor, onChang
         {urgency === 'dueSoon' && (
           <span className="text-[10px] font-medium text-amber-700 leading-tight">Due within 30 days</span>
         )}
+        {nocBlock}
       </div>
     );
   }
@@ -169,6 +211,7 @@ function RenewalDateCell({ groupEditActive, inlineEditData, groupAnchor, onChang
       {urgency === 'dueSoon' && (
         <span className="text-[10px] font-medium text-amber-700 leading-tight">Due in ≤30 days</span>
       )}
+      {nocBlock}
     </div>
   );
 }
@@ -198,6 +241,99 @@ const CGWFlowMetre = () => {
   const [digestScheduleTz, setDigestScheduleTz] = useState('');
   const [digestSaving, setDigestSaving] = useState(false);
 
+  const [nocDialogOpen, setNocDialogOpen] = useState(false);
+  const [nocTargetItem, setNocTargetItem] = useState(null);
+  const [nocFile, setNocFile] = useState(null);
+  const [nocLocalPreview, setNocLocalPreview] = useState('');
+  const [nocForm, setNocForm] = useState({
+    project_name: '',
+    noc_no: '',
+    application_no: '',
+    valid_from: '',
+    valid_upto: '',
+  });
+  const [nocSaving, setNocSaving] = useState(false);
+
+  const nocDocHref = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${BACKEND_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const clearNocLocalPreview = () => {
+    setNocLocalPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+  };
+
+  const openNocDialog = (item) => {
+    clearNocLocalPreview();
+    setNocFile(null);
+    setNocTargetItem(item);
+    setNocForm({
+      project_name: item.noc_project_name || '',
+      noc_no: item.noc_no || '',
+      application_no: item.noc_application_no || '',
+      valid_from: item.noc_valid_from || '',
+      valid_upto: item.noc_valid_upto || '',
+    });
+    setNocDialogOpen(true);
+  };
+
+  const closeNocDialog = () => {
+    clearNocLocalPreview();
+    setNocFile(null);
+    setNocTargetItem(null);
+    setNocDialogOpen(false);
+  };
+
+  const handleNocFilePicked = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Only PDF files are allowed');
+      return;
+    }
+    clearNocLocalPreview();
+    const u = URL.createObjectURL(f);
+    setNocLocalPreview(u);
+    setNocFile(f);
+  };
+
+  const handleNocSave = async () => {
+    if (!nocTargetItem) return;
+    const hasExisting = !!(nocTargetItem.noc_document_url && String(nocTargetItem.noc_document_url).trim());
+    if (!nocFile && !hasExisting) {
+      toast.error('Select a NOC PDF to upload.');
+      return;
+    }
+    setNocSaving(true);
+    try {
+      const fd = new FormData();
+      if (nocFile) fd.append('file', nocFile);
+      fd.append('project_name', nocForm.project_name || '');
+      fd.append('noc_no', nocForm.noc_no || '');
+      fd.append('application_no', nocForm.application_no || '');
+      fd.append('valid_from', nocForm.valid_from || '');
+      fd.append('valid_upto', nocForm.valid_upto || '');
+      await axios.post(`${API}/cgw-flow-metres/${nocTargetItem.id}/noc`, fd, {
+        headers: authHeaders(),
+        timeout: 120000,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
+      toast.success('NOC saved');
+      closeNocDialog();
+      fetchItems();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to save NOC');
+    } finally {
+      setNocSaving(false);
+    }
+  };
+
   useEffect(() => {
     fetchCustomers();
     fetchItems();
@@ -206,6 +342,7 @@ const CGWFlowMetre = () => {
   const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
   useEffect(() => {
+    if (!SHOW_CGW_DIGEST_EMAIL_SECTION) return undefined;
     if (!['Admin', 'HR'].includes(user?.role)) return undefined;
     let cancelled = false;
     (async () => {
@@ -416,6 +553,102 @@ const CGWFlowMetre = () => {
   };
 
   const canManage = ['Admin', 'HR'].includes(user?.role);
+  const nocReadOnly = !canManage;
+
+  const [mediaDialogOpen, setMediaDialogOpen] = useState(false);
+  const [mediaDialogItem, setMediaDialogItem] = useState(null);
+  const [mediaActiveCategory, setMediaActiveCategory] = useState('flow_meter');
+  const [mediaSelectedFileId, setMediaSelectedFileId] = useState(null);
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const mediaFileInputRef = useRef(null);
+  const mediaPickCategoryRef = useRef(null);
+
+  useEffect(() => {
+    if (!mediaDialogOpen || !mediaDialogItem) return;
+    const list = mediaDialogItem.cgw_attachments?.[mediaActiveCategory] || [];
+    setMediaSelectedFileId((prev) => {
+      if (prev && list.some((a) => a.id === prev)) return prev;
+      return list[0]?.id || null;
+    });
+  }, [mediaDialogOpen, mediaDialogItem, mediaActiveCategory]);
+
+  const openMediaDialog = (item, category = 'flow_meter') => {
+    setMediaDialogItem(item);
+    setMediaActiveCategory(CGW_MEDIA_KEYS.includes(category) ? category : 'flow_meter');
+    setMediaSelectedFileId(null);
+    setMediaDialogOpen(true);
+  };
+
+  const closeMediaDialog = () => {
+    setMediaDialogOpen(false);
+    setMediaDialogItem(null);
+    setMediaSelectedFileId(null);
+  };
+
+  const getAttachList = (item, cat) => item?.cgw_attachments?.[cat] || [];
+
+  const triggerMediaFilePick = (cat) => {
+    if (!canManage) return;
+    mediaPickCategoryRef.current = cat;
+    mediaFileInputRef.current?.click();
+  };
+
+  const handleMediaFilesSelected = async (e) => {
+    const files = e.target.files;
+    e.target.value = '';
+    const cat = mediaPickCategoryRef.current;
+    mediaPickCategoryRef.current = null;
+    if (!files?.length || !cat || !mediaDialogItem || !canManage) return;
+    const list = Array.from(files);
+    setMediaUploading(true);
+    try {
+      for (const f of list) {
+        const fd = new FormData();
+        fd.append('category', cat);
+        fd.append('file', f);
+        await axios.post(`${API}/cgw-flow-metres/${mediaDialogItem.id}/media-attachments`, fd, {
+          headers: authHeaders(),
+          timeout: 120000,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        });
+      }
+      toast.success(list.length > 1 ? `${list.length} files uploaded` : 'File uploaded');
+      const res = await axios.get(`${API}/cgw-flow-metres/${mediaDialogItem.id}`, { headers: authHeaders() });
+      setMediaDialogItem(res.data);
+      fetchItems();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Upload failed');
+    } finally {
+      setMediaUploading(false);
+    }
+  };
+
+  const handleDeleteMediaFile = async (cat, attId) => {
+    if (!mediaDialogItem || !canManage) return;
+    if (!window.confirm('Remove this file from the server and this inventory row?')) return;
+    try {
+      await axios.delete(
+        `${API}/cgw-flow-metres/${mediaDialogItem.id}/media-attachments/${cat}/${encodeURIComponent(attId)}`,
+        { headers: authHeaders() }
+      );
+      toast.success('Attachment removed');
+      const res = await axios.get(`${API}/cgw-flow-metres/${mediaDialogItem.id}`, { headers: authHeaders() });
+      setMediaDialogItem(res.data);
+      fetchItems();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Delete failed');
+    }
+  };
+
+  const mediaPreviewHref = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${BACKEND_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const mediaIsImage = (url) => /\.(jpg|jpeg|png|gif|webp)(\?|#|$)/i.test(url || '');
+  const mediaIsPdf = (url) => /\.pdf(\?|#|$)/i.test(url || '');
 
   const handleApplyColumnFilter = () => {
     setColumnFilters(
@@ -808,7 +1041,7 @@ const CGWFlowMetre = () => {
         )}
       </div>
 
-      {canManage && (
+      {canManage && SHOW_CGW_DIGEST_EMAIL_SECTION && (
         <Card className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1 min-w-0 flex-1">
@@ -870,11 +1103,19 @@ const CGWFlowMetre = () => {
       {filteredItems.length > 0 ? (
         <Card className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
           <div className="overflow-auto table-scroll max-h-[calc(100vh-155px)] scrollbar-thin" style={{ scrollbarWidth: 'auto' }}>
-            <table className="w-full text-xs min-w-[1900px]">
+            <table className="w-full text-xs min-w-[2180px]">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-100">
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">SL NO</th>
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">CUSTOMER NAME</th>
+                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap min-w-[108px] align-top">
+                    <span className="block leading-snug">NOC</span>
+                    <span className="mt-0.5 block text-[10px] font-normal text-gray-500 leading-tight">Per equipment row</span>
+                  </th>
+                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap min-w-[120px] align-top">
+                    <span className="block leading-snug">PHOTOS / DOCS</span>
+                    <span className="mt-0.5 block text-[10px] font-normal text-gray-500 leading-tight">S3 · per row</span>
+                  </th>
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">LOCATION</th>
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">CONTACT PERSON</th>
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">NAME OF EQUIPMENT</th>
@@ -896,7 +1137,6 @@ const CGWFlowMetre = () => {
                     </span>
                   </th>
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">REVIEW</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">CALIBARATION CERTIFICATE</th>
                   <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">REMARKS</th>
                   {canManage && (
                     <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">ACTIONS</th>
@@ -932,6 +1172,83 @@ const CGWFlowMetre = () => {
                           {groupEditActive ? (
                             <Input value={inlineEditData.customer_name} onChange={(e) => handleInlineChange('customer_name', e.target.value)} className="h-7 text-[11px] px-2" />
                           ) : (groupAnchor.customer_name || '—')}
+                        </td>
+                      )}
+                      {rowIndex === 0 && (
+                        <td rowSpan={group.rows.length} className="py-1.5 px-2 align-top min-w-[108px] border-r border-gray-100 bg-white">
+                          <div className="space-y-2">
+                            {group.rows.map((inv) => (
+                              <div key={inv.id} className="rounded border border-gray-200 bg-gray-50/80 p-1.5">
+                                <p className="text-[9px] font-mono text-gray-500 mb-1 truncate" title={inv.inventory_id}>
+                                  {inv.inventory_id}
+                                </p>
+                                {canManage ? (
+                                  <div className="flex flex-col gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 px-1 text-[9px] border-gray-200"
+                                      onClick={() => openNocDialog(inv)}
+                                    >
+                                      <FileText className="h-3 w-3 mr-0.5 shrink-0" />
+                                      NOC
+                                    </Button>
+                                    {inv.noc_document_url ? (
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-1 text-[9px] text-blue-700"
+                                        onClick={() => openNocDialog(inv)}
+                                      >
+                                        <Eye className="h-3 w-3 mr-0.5" />
+                                        Preview
+                                      </Button>
+                                    ) : null}
+                                  </div>
+                                ) : inv.noc_document_url ? (
+                                  <Button type="button" variant="ghost" size="sm" className="h-7 px-1 text-[9px]" onClick={() => openNocDialog(inv)}>
+                                    <Eye className="h-3 w-3 mr-0.5" />
+                                    View
+                                  </Button>
+                                ) : (
+                                  <span className="text-[10px] text-gray-400">—</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      )}
+                      {rowIndex === 0 && (
+                        <td rowSpan={group.rows.length} className="py-1.5 px-2 align-top min-w-[120px] border-r border-gray-100 bg-white">
+                          <div className="space-y-2">
+                            {group.rows.map((inv) => (
+                              <div key={inv.id} className="rounded border border-gray-200 bg-gray-50/80 p-1.5">
+                                <p className="text-[9px] font-mono text-gray-500 mb-1 truncate">{inv.inventory_id}</p>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-1 text-[9px] border-gray-200 w-full"
+                                  onClick={() => openMediaDialog(inv, 'flow_meter')}
+                                >
+                                  Files (S3)
+                                </Button>
+                                <div className="text-[8px] text-gray-500 mt-1 leading-tight space-y-0.5">
+                                  {CGW_MEDIA_KEYS.map((k) => {
+                                    const n = (inv.cgw_attachments?.[k] || []).length;
+                                    if (!n) return null;
+                                    return (
+                                      <div key={`${inv.id}-${k}`}>
+                                        {CGW_MEDIA_LABELS[k].split('(')[0].trim().slice(0, 10)}: {n}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </td>
                       )}
                       {rowIndex === 0 && (
@@ -1038,6 +1355,7 @@ const CGWFlowMetre = () => {
                             inlineEditData={inlineEditData}
                             groupAnchor={groupAnchor}
                             onChange={handleInlineChange}
+                            groupRows={group.rows}
                           />
                         </td>
                       )}
@@ -1045,9 +1363,6 @@ const CGWFlowMetre = () => {
                         <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 min-w-[160px]">
                           {groupEditActive ? <Input value={inlineEditData.review} onChange={(e) => handleInlineChange('review', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.review || '—')}
                         </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 min-w-[160px]">{groupAnchor.calibration_certificate || '—'}</td>
                       )}
                       {rowIndex === 0 && (
                         <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 min-w-[160px]">
@@ -1155,6 +1470,268 @@ const CGWFlowMetre = () => {
           <p className="text-gray-600">No inventory items found</p>
         </Card>
       )}
+
+      <Dialog
+        open={nocDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeNocDialog();
+        }}
+      >
+        <DialogContent
+          className={cn(
+            'flex flex-col gap-0 p-0 overflow-hidden border-0 bg-white max-w-[96vw] w-[96vw]',
+            'max-h-[92vh] h-[92vh] rounded-lg shadow-xl',
+            'left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%]'
+          )}
+        >
+          <div className="bg-slate-800 text-white px-4 py-3 pr-14 shrink-0 border-b border-slate-700">
+            <DialogHeader className="space-y-0 text-left">
+              <DialogTitle className="text-base font-semibold text-white m-0 flex items-center gap-2">
+                <FileText className="h-5 w-5 shrink-0" />
+                <span className="truncate">
+                  NOC — {nocTargetItem?.inventory_id || ''} · {nocTargetItem?.customer_name || ''}
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+          </div>
+          <div className="flex flex-1 min-h-0 flex-col lg:flex-row gap-0 overflow-hidden">
+            <div className="relative flex-1 min-h-[40vh] lg:min-h-0 bg-neutral-900 border-b lg:border-b-0 lg:border-r border-gray-200">
+              {(() => {
+                const pdfSrc =
+                  nocLocalPreview ||
+                  (nocTargetItem?.noc_document_url ? nocDocHref(nocTargetItem.noc_document_url) : '');
+                return pdfSrc ? (
+                  <iframe title="NOC PDF" src={pdfSrc} className="absolute inset-0 h-full w-full border-0 bg-white" />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 p-6 text-center text-sm text-gray-500">
+                    {nocReadOnly
+                      ? 'No NOC document on file for this row.'
+                      : 'Select a PDF (right) to preview here, or open an existing NOC from the grid.'}
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="w-full lg:w-[380px] shrink-0 overflow-y-auto p-4 space-y-3 bg-white">
+              {!nocReadOnly && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">NOC PDF</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={handleNocFilePicked}
+                      className="h-9 text-xs"
+                    />
+                    <Upload className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+                  </div>
+                  <p className="text-[11px] text-gray-500">Same flow as Documents: PDF only, max 25 MB.</p>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Project name</Label>
+                <Input
+                  value={nocForm.project_name}
+                  onChange={(e) => setNocForm((p) => ({ ...p, project_name: e.target.value }))}
+                  disabled={nocReadOnly}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">NOC No</Label>
+                <Input
+                  value={nocForm.noc_no}
+                  onChange={(e) => setNocForm((p) => ({ ...p, noc_no: e.target.value }))}
+                  disabled={nocReadOnly}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Application No</Label>
+                <Input
+                  value={nocForm.application_no}
+                  onChange={(e) => setNocForm((p) => ({ ...p, application_no: e.target.value }))}
+                  disabled={nocReadOnly}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Valid from</Label>
+                <Input
+                  type="date"
+                  value={nocForm.valid_from}
+                  onChange={(e) => setNocForm((p) => ({ ...p, valid_from: e.target.value }))}
+                  disabled={nocReadOnly}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Valid up to</Label>
+                <Input
+                  type="date"
+                  value={nocForm.valid_upto}
+                  onChange={(e) => setNocForm((p) => ({ ...p, valid_upto: e.target.value }))}
+                  disabled={nocReadOnly}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
+                {!nocReadOnly && (
+                  <Button
+                    type="button"
+                    className="bg-blue-600 text-white hover:bg-blue-700"
+                    disabled={nocSaving}
+                    onClick={handleNocSave}
+                  >
+                    {nocSaving ? 'Saving…' : 'Save NOC'}
+                  </Button>
+                )}
+                <Button type="button" variant="outline" onClick={closeNocDialog}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <input
+        ref={mediaFileInputRef}
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,image/*,application/pdf"
+        multiple
+        className="hidden"
+        onChange={handleMediaFilesSelected}
+      />
+
+      <Dialog
+        open={mediaDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeMediaDialog();
+        }}
+      >
+        <DialogContent
+          className={cn(
+            'flex flex-col gap-0 p-0 overflow-hidden border-0 bg-white max-w-[96vw] w-[96vw]',
+            'max-h-[90vh] h-[90vh] rounded-lg shadow-xl',
+            'left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%]'
+          )}
+        >
+          <div className="bg-slate-800 text-white px-4 py-3 pr-14 shrink-0 border-b border-slate-700">
+            <DialogHeader className="space-y-0 text-left">
+              <DialogTitle className="text-base font-semibold text-white m-0 flex items-center gap-2">
+                <FileText className="h-5 w-5 shrink-0" />
+                <span className="truncate">
+                  Photos & documents (S3) — {mediaDialogItem?.inventory_id} · {mediaDialogItem?.customer_name}
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+          </div>
+          <p className="px-4 py-2 text-[11px] text-amber-900 bg-amber-50 border-b border-amber-100 shrink-0">
+            Uploads require S3 to be configured on the server. Preview opens here — no download needed for images/PDF.
+          </p>
+          <div className="flex flex-wrap gap-1 px-3 py-2 border-b border-gray-200 bg-gray-50 shrink-0">
+            {CGW_MEDIA_KEYS.map((k) => (
+              <Button
+                key={k}
+                type="button"
+                size="sm"
+                variant={mediaActiveCategory === k ? 'default' : 'outline'}
+                className={`h-8 text-[10px] px-2 ${mediaActiveCategory === k ? 'bg-blue-600' : ''}`}
+                onClick={() => setMediaActiveCategory(k)}
+              >
+                {CGW_MEDIA_LABELS[k]}
+                <span className="ml-1 opacity-80">({getAttachList(mediaDialogItem, k).length})</span>
+              </Button>
+            ))}
+          </div>
+          <div className="flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
+            <div className="w-full md:w-72 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 flex flex-col min-h-0 bg-white">
+              <div className="p-2 border-b border-gray-100 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-gray-700">Files in tab</span>
+                {canManage && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-[10px]"
+                    disabled={mediaUploading}
+                    onClick={() => triggerMediaFilePick(mediaActiveCategory)}
+                  >
+                    <Upload className="h-3 w-3 mr-1" />
+                    Add files
+                  </Button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {(getAttachList(mediaDialogItem, mediaActiveCategory).length ? (
+                  getAttachList(mediaDialogItem, mediaActiveCategory).map((att) => (
+                    <div
+                      key={att.id}
+                      className={`flex items-start justify-between gap-1 rounded border px-2 py-1.5 text-[11px] ${
+                        mediaSelectedFileId === att.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="text-left flex-1 min-w-0 truncate text-gray-800 hover:underline"
+                        onClick={() => setMediaSelectedFileId(att.id)}
+                        title={att.file_name}
+                      >
+                        {att.file_name}
+                      </button>
+                      {canManage && (
+                        <button
+                          type="button"
+                          className="text-red-600 shrink-0 text-[10px] hover:underline"
+                          onClick={() => handleDeleteMediaFile(mediaActiveCategory, att.id)}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[11px] text-gray-500 p-2">No files in this category yet.</p>
+                ))}
+              </div>
+            </div>
+            <div className="relative flex-1 min-h-[240px] md:min-h-0 bg-neutral-900">
+              {(() => {
+                const mList = getAttachList(mediaDialogItem, mediaActiveCategory);
+                const sel = mList.find((a) => a.id === mediaSelectedFileId) || mList[0];
+                const href = sel ? mediaPreviewHref(sel.url) : '';
+                if (!href) {
+                  return (
+                    <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-sm text-gray-500 p-6 text-center">
+                      Select a file from the list to preview.
+                    </div>
+                  );
+                }
+                if (mediaIsPdf(href)) {
+                  return <iframe title="Preview" src={href} className="absolute inset-0 h-full w-full border-0 bg-white" />;
+                }
+                if (mediaIsImage(href)) {
+                  return (
+                    <div className="absolute inset-0 overflow-auto bg-gray-100 flex items-center justify-center p-2">
+                      <img src={href} alt="" className="max-h-full max-w-full object-contain" />
+                    </div>
+                  );
+                }
+                return (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-sm text-gray-600 p-4 text-center">
+                    Inline preview is not available for this file type. URL is stored on the row in S3.
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+          <div className="px-4 py-2 border-t border-gray-200 bg-white shrink-0 flex justify-end">
+            <Button type="button" variant="outline" onClick={closeMediaDialog}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
