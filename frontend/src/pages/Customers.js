@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,20 +6,12 @@ import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X, FileText, ExternalLink } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
+import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X } from 'lucide-react';
+import { API_ENDPOINT } from '@/lib/apiConfig';
 
 const API = API_ENDPOINT;
 
 const authHeaders = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-
-/** Build absolute URL for uploaded PDFs or S3 links */
-const attachmentHref = (url) => {
-  if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `${BACKEND_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
-};
 
 export const Customers = () => {
   const [customers, setCustomers] = useState([]);
@@ -28,13 +20,6 @@ export const Customers = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
-  const fileInputRef = useRef(null);
-  /** Must be a ref: state updates after click() so onChange would see null if we used useState. */
-  const uploadTargetCustomerIdRef = useRef(null);
-  const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false);
-  const [attachmentCustomer, setAttachmentCustomer] = useState(null);
-  const [selectedPdfUrl, setSelectedPdfUrl] = useState('');
-  const [uploading, setUploading] = useState(false);
 
   const [formData, setFormData] = useState({
     company_name: '',
@@ -78,104 +63,6 @@ export const Customers = () => {
       return null;
     } finally {
       setLoading(false);
-    }
-  };
-
-  const openAttachmentDialog = (customer) => {
-    const list = customer.attachments || [];
-    setAttachmentCustomer(customer);
-    setSelectedPdfUrl(list.length ? attachmentHref(list[0].url) : '');
-    setAttachmentDialogOpen(true);
-  };
-
-  const triggerPdfUpload = (customerId) => {
-    if (!customerId) {
-      toast.error('Missing customer id for upload.');
-      return;
-    }
-    uploadTargetCustomerIdRef.current = customerId;
-    const input = fileInputRef.current;
-    if (!input) return;
-    // Backup for browsers/timing where ref is cleared before onChange runs (also survives rapid row clicks).
-    input.dataset.nocCustomerId = customerId;
-    input.click();
-  };
-
-  const handlePdfFilesSelected = async (e) => {
-    const input = e.target;
-    const files = input.files;
-    const targetId =
-      uploadTargetCustomerIdRef.current || (input && input.dataset?.nocCustomerId) || '';
-    uploadTargetCustomerIdRef.current = null;
-    if (input?.dataset) delete input.dataset.nocCustomerId;
-    input.value = '';
-    if (!files?.length) return;
-    if (!targetId) {
-      toast.error('Could not determine which customer to attach to. Click Add NOC again.');
-      return;
-    }
-
-    const list = Array.from(files);
-    const nonPdf = list.filter((f) => !f.name.toLowerCase().endsWith('.pdf'));
-    if (nonPdf.length) {
-      toast.error('Only PDF files are allowed');
-      return;
-    }
-
-    setUploading(true);
-    try {
-      let lastAttachments = null;
-      for (const file of list) {
-        const fd = new FormData();
-        fd.append('file', file);
-        const { data } = await axios.post(`${API}/customers/${targetId}/attachments`, fd, {
-          ...authHeaders(),
-          timeout: 120000,
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-        });
-        lastAttachments = data;
-      }
-      const uploadedMsg = list.length > 1 ? `${list.length} NOC PDFs uploaded` : 'NOC PDF uploaded';
-      toast.success(uploadedMsg, {
-        description: `NOCs are stored by POST /api/customers/{id}/attachments (not PUT /customers). In Network, filter "attachments" — your id starts with ${targetId.slice(0, 8)}.`,
-      });
-      if (lastAttachments) {
-        setCustomers((prev) =>
-          prev.map((c) => (c.id === targetId ? { ...c, attachments: lastAttachments } : c))
-        );
-      }
-      const allCustomers = await fetchCustomers();
-      if (attachmentCustomer?.id === targetId && allCustomers) {
-        const refreshed = allCustomers.find((c) => c.id === targetId);
-        if (refreshed) {
-          setAttachmentCustomer(refreshed);
-          const atts = refreshed.attachments || [];
-          if (atts.length) setSelectedPdfUrl(attachmentHref(atts[atts.length - 1].url));
-        }
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Upload failed');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const deleteCustomerAttachment = async (customerId, attachmentId) => {
-    if (!window.confirm('Remove this PDF attachment?')) return;
-    try {
-      await axios.delete(`${API}/customers/${customerId}/attachments/${attachmentId}`, authHeaders());
-      toast.success('Attachment removed');
-      const allCustomers = await fetchCustomers();
-      if (attachmentCustomer?.id === customerId && allCustomers) {
-        const refreshed = allCustomers.find((c) => c.id === customerId);
-        setAttachmentCustomer(refreshed || null);
-        const atts = refreshed?.attachments || [];
-        setSelectedPdfUrl(atts.length ? attachmentHref(atts[0].url) : '');
-        if (!atts.length) setAttachmentDialogOpen(false);
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Delete failed');
     }
   };
 
@@ -622,7 +509,6 @@ export const Customers = () => {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Customer ID</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Company Name</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700 min-w-[200px]">NOC</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Contact Person</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Phone</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Email</th>
@@ -641,36 +527,6 @@ export const Customers = () => {
                 >
                   <td className="py-3 px-4 font-mono text-gray-900">{customer.customer_id}</td>
                   <td className="py-3 px-4 font-medium text-gray-900">{customer.company_name}</td>
-                  <td className="py-3 px-4 align-top">
-                    <div className="flex flex-col gap-2 min-w-[180px]">
-                      <span className="text-xs text-gray-500">
-                        {(customer.attachments && customer.attachments.length) || 0} NOC PDF{(customer.attachments?.length || 0) !== 1 ? 's' : ''}
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs"
-                          disabled={!customer.attachments?.length}
-                          onClick={() => openAttachmentDialog(customer)}
-                        >
-                          <FileText className="h-3.5 w-3.5 mr-1" />
-                          Preview
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 text-xs bg-blue-600 text-white hover:bg-blue-700"
-                          disabled={uploading}
-                          onClick={() => triggerPdfUpload(customer.id)}
-                        >
-                          <Plus className="h-3.5 w-3.5 mr-1" />
-                          Add NOC
-                        </Button>
-                      </div>
-                    </div>
-                  </td>
                   <td className="py-3 px-4 text-gray-600">{customer.contact_person_name}</td>
                   <td className="py-3 px-4 text-gray-600">
                     {customer.phone ? (
@@ -737,98 +593,6 @@ export const Customers = () => {
           <p className="text-gray-600">No customers found</p>
         </Card>
       )}
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,application/pdf"
-        multiple
-        className="hidden"
-        onChange={handlePdfFilesSelected}
-      />
-
-      <Dialog
-        open={attachmentDialogOpen}
-        onOpenChange={(open) => {
-          setAttachmentDialogOpen(open);
-          if (!open) {
-            setAttachmentCustomer(null);
-            setSelectedPdfUrl('');
-          }
-        }}
-      >
-        <DialogContent
-          className={cn(
-            'flex flex-col gap-0 p-0 overflow-hidden border-0 bg-white',
-            'h-[100dvh] w-screen max-w-none max-h-[100dvh] rounded-none shadow-xl',
-            'left-0 top-0 translate-x-0 translate-y-0 sm:max-w-none sm:rounded-none sm:max-h-[100dvh]'
-          )}
-        >
-          <div className="bg-slate-800 text-white px-4 py-3 pr-14 shrink-0 flex items-center min-h-[52px] border-b border-slate-700">
-            <DialogHeader className="flex-1 space-y-0 text-left">
-              <DialogTitle className="text-base sm:text-lg font-semibold text-white flex items-center gap-2 truncate m-0">
-                <FileText className="h-5 w-5 shrink-0" />
-                <span className="truncate">
-                  {attachmentCustomer ? `${attachmentCustomer.company_name} — NOC (PDF)` : 'NOC'}
-                </span>
-              </DialogTitle>
-            </DialogHeader>
-          </div>
-          <div className="flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
-            <aside className="max-h-[32vh] md:max-h-none md:h-auto md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 bg-white overflow-y-auto">
-              {(attachmentCustomer?.attachments || []).length === 0 ? (
-                <p className="p-3 text-sm text-gray-500">No NOC files yet. Use Add NOC on the customer row.</p>
-              ) : (
-                <ul className="divide-y divide-gray-100">
-                  {(attachmentCustomer?.attachments || []).map((att) => (
-                    <li key={att.id} className="p-2">
-                      <button
-                        type="button"
-                        className={`w-full text-left text-xs rounded px-2 py-1.5 truncate ${selectedPdfUrl === attachmentHref(att.url) ? 'bg-blue-100 text-blue-900 font-medium' : 'hover:bg-gray-50 text-gray-800'}`}
-                        title={att.file_name}
-                        onClick={() => setSelectedPdfUrl(attachmentHref(att.url))}
-                      >
-                        {att.file_name}
-                      </button>
-                      <div className="flex flex-wrap gap-1 mt-1 px-1">
-                        <a
-                          href={attachmentHref(att.url)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 text-[11px] text-blue-600 hover:underline"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          New tab
-                        </a>
-                        <button
-                          type="button"
-                          className="text-[11px] text-red-600 hover:underline"
-                          onClick={() => deleteCustomerAttachment(attachmentCustomer.id, att.id)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </aside>
-            <div className="relative flex-1 min-h-0 min-w-0 bg-neutral-900">
-              {selectedPdfUrl ? (
-                <iframe
-                  title="NOC PDF preview"
-                  src={selectedPdfUrl}
-                  className="absolute inset-0 h-full w-full border-0 bg-white"
-                />
-              ) : (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-                  <p className="p-8 text-center text-sm text-gray-500">Select a file to preview</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

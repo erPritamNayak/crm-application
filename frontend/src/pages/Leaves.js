@@ -22,6 +22,7 @@ export const Leaves = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('All');
+  const [employeeFilter, setEmployeeFilter] = useState('all');
   const [balance, setBalance] = useState(null);
   const [policy, setPolicy] = useState(null);
   const [policyInput, setPolicyInput] = useState('');
@@ -316,6 +317,7 @@ export const Leaves = () => {
     }
     
     // For approvers, show all leaves
+    if (employeeFilter !== 'all' && String(leave.employee_id) !== String(employeeFilter)) return false;
     return true;
   });
 
@@ -549,23 +551,41 @@ export const Leaves = () => {
 
       {/* Status Tabs */}
       <Card className="p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="flex gap-2">
-          {statusTabs.map((tab) => (
-            <Button
-              key={tab}
-              variant={activeTab === tab ? 'default' : 'ghost'}
-              size="sm"
-              className={`h-9 rounded-md ${
-                activeTab === tab
-                  ? 'bg-blue-50 text-blue-700 font-medium'
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
-              onClick={() => setActiveTab(tab)}
-              data-testid={`status-tab-${tab.toLowerCase()}`}
-            >
-              {tab}
-            </Button>
-          ))}
+        <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+          <div className="flex gap-2">
+            {statusTabs.map((tab) => (
+              <Button
+                key={tab}
+                variant={activeTab === tab ? 'default' : 'ghost'}
+                size="sm"
+                className={`h-9 rounded-md ${
+                  activeTab === tab
+                    ? 'bg-blue-50 text-blue-700 font-medium'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+                onClick={() => setActiveTab(tab)}
+                data-testid={`status-tab-${tab.toLowerCase()}`}
+              >
+                {tab}
+              </Button>
+            ))}
+          </div>
+          {canApprove && (
+            <div className="w-full md:w-72">
+              <select
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <option value="all">All employees</option>
+                {employees.map((emp) => (
+                  <option key={emp.employee_id} value={emp.employee_id}>
+                    {emp.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </Card>
 
