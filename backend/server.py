@@ -1331,6 +1331,7 @@ class EmployeeCreate(BaseModel):
     job_role: str
     joining_date: str
     salary: float
+    status: Literal['Active', 'Inactive'] = 'Active'
     address: Optional[str] = None
     emergency_contact: Optional[str] = None
     profile_photo: Optional[str] = None
@@ -2605,6 +2606,7 @@ def create_employee(emp_data: EmployeeCreate, current_user: UserModel = Depends(
         job_role=emp_data.job_role,
         joining_date=emp_data.joining_date,
         salary=emp_data.salary,
+        status=emp_data.status,
         address=emp_data.address,
         emergency_contact=emp_data.emergency_contact
     )
