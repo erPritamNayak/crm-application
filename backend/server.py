@@ -679,6 +679,34 @@ class CGWFlowMetreModel(Base):
     renewal_date = Column(String(10), nullable=True)  # YYYY-MM-DD
     review = Column(String(1000), nullable=True)
     calibration_certificate = Column(String(500), nullable=True)  # File URL
+    flow_meter_make = Column(String(100), nullable=True)
+    flow_meter_size = Column(String(200), nullable=True)
+    flow_meter_serial = Column(String(200), nullable=True)
+    calibration_valid_from = Column(String(10), nullable=True)
+    calibration_valid_to = Column(String(10), nullable=True)
+    telemetry_applicable = Column(String(10), nullable=True)
+    telemetry_company = Column(String(50), nullable=True)
+    telemetry_company_other = Column(String(200), nullable=True)
+    telemetry_communication_via = Column(String(50), nullable=True)
+    telemetry_sim_provider = Column(String(50), nullable=True)
+    telemetry_sim_provider_other = Column(String(200), nullable=True)
+    telemetry_sim_number = Column(String(100), nullable=True)
+    telemetry_sim_valid_from = Column(String(10), nullable=True)
+    telemetry_sim_valid_to = Column(String(10), nullable=True)
+    telemetry_product_code = Column(String(100), nullable=True)
+    telemetry_serial_number = Column(String(200), nullable=True)
+    telemetry_portal_url = Column(String(500), nullable=True)
+    telemetry_username = Column(String(200), nullable=True)
+    telemetry_password = Column(String(255), nullable=True)
+    telemetry_valid_from = Column(String(10), nullable=True)
+    telemetry_valid_to = Column(String(10), nullable=True)
+    telemetry_uploaded_previous_year = Column(String(10), nullable=True)
+    telemetry_previous_serial = Column(String(200), nullable=True)
+    telemetry_previous_data_available = Column(String(10), nullable=True)
+    telemetry_previous_data_from = Column(String(10), nullable=True)
+    telemetry_previous_data_to = Column(String(10), nullable=True)
+    # JSON blob for per-inventory piezometer details (wizard step 4); schema TBD
+    piezometer_details_json = Column(Text, nullable=True)
     remarks = Column(String(1000), nullable=True)
     noc_document_url = Column(String(1000), nullable=True)
     noc_project_name = Column(String(500), nullable=True)
@@ -694,7 +722,14 @@ class CGWFlowMetreModel(Base):
     noc_permitted_m3_per_year = Column(String(100), nullable=True)
     noc_existing_bw_count = Column(String(100), nullable=True)
     noc_total_proposed_bw_count = Column(String(100), nullable=True)
+    noc_flowmeter_applicable = Column(String(10), nullable=True)  # yes | no
+    noc_flowmeter_count = Column(String(100), nullable=True)
     noc_piezometer_applicable = Column(String(10), nullable=True)  # yes | no
+    noc_piezometer_count = Column(String(100), nullable=True)
+    noc_bhuneer_user_id = Column(String(200), nullable=True)
+    noc_bhuneer_password = Column(String(255), nullable=True)
+    noc_nocap_user_id = Column(String(200), nullable=True)
+    noc_nocap_password = Column(String(255), nullable=True)
     # JSON: {"flow_meter":[{id,file_name,url}], "telemetry":[...], ...}
     cgw_attachments_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -1171,7 +1206,14 @@ def migrate_cgw_flow_metres_noc_columns():
             ('noc_permitted_m3_per_year', 'VARCHAR(100) NULL'),
             ('noc_existing_bw_count', 'VARCHAR(100) NULL'),
             ('noc_total_proposed_bw_count', 'VARCHAR(100) NULL'),
+            ('noc_flowmeter_applicable', 'VARCHAR(10) NULL'),
+            ('noc_flowmeter_count', 'VARCHAR(100) NULL'),
             ('noc_piezometer_applicable', 'VARCHAR(10) NULL'),
+            ('noc_piezometer_count', 'VARCHAR(100) NULL'),
+            ('noc_bhuneer_user_id', 'VARCHAR(200) NULL'),
+            ('noc_bhuneer_password', 'VARCHAR(255) NULL'),
+            ('noc_nocap_user_id', 'VARCHAR(200) NULL'),
+            ('noc_nocap_password', 'VARCHAR(255) NULL'),
         ]
         for col_name, ddl in specs:
             if col_name in existing:
@@ -1211,6 +1253,104 @@ def migrate_cgw_flow_metres_attachments_json():
 
 
 migrate_cgw_flow_metres_attachments_json()
+
+
+def migrate_cgw_flow_metres_flow_metre_details_columns():
+    """Add flow metre / calibration / telemetry detail columns to cgw_flow_metres if missing."""
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        existing = {col['name'] for col in inspector.get_columns('cgw_flow_metres')}
+        specs = [
+            ('flow_meter_make', 'VARCHAR(100) NULL'),
+            ('flow_meter_size', 'VARCHAR(200) NULL'),
+            ('flow_meter_serial', 'VARCHAR(200) NULL'),
+            ('calibration_valid_from', 'VARCHAR(10) NULL'),
+            ('calibration_valid_to', 'VARCHAR(10) NULL'),
+            ('telemetry_applicable', 'VARCHAR(10) NULL'),
+            ('telemetry_company', 'VARCHAR(50) NULL'),
+            ('telemetry_company_other', 'VARCHAR(200) NULL'),
+            ('telemetry_communication_via', 'VARCHAR(50) NULL'),
+            ('telemetry_sim_provider', 'VARCHAR(50) NULL'),
+            ('telemetry_sim_provider_other', 'VARCHAR(200) NULL'),
+            ('telemetry_sim_number', 'VARCHAR(100) NULL'),
+            ('telemetry_sim_valid_from', 'VARCHAR(10) NULL'),
+            ('telemetry_sim_valid_to', 'VARCHAR(10) NULL'),
+            ('telemetry_product_code', 'VARCHAR(100) NULL'),
+            ('telemetry_serial_number', 'VARCHAR(200) NULL'),
+            ('telemetry_valid_from', 'VARCHAR(10) NULL'),
+            ('telemetry_valid_to', 'VARCHAR(10) NULL'),
+            ('telemetry_uploaded_previous_year', 'VARCHAR(10) NULL'),
+            ('telemetry_previous_serial', 'VARCHAR(200) NULL'),
+            ('telemetry_previous_data_available', 'VARCHAR(10) NULL'),
+            ('telemetry_previous_data_from', 'VARCHAR(10) NULL'),
+            ('telemetry_previous_data_to', 'VARCHAR(10) NULL'),
+        ]
+        for col_name, ddl in specs:
+            if col_name in existing:
+                continue
+            with engine.connect() as conn:
+                if DATABASE_URL.startswith('mysql'):
+                    conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN {col_name} {ddl}'))
+                else:
+                    conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN {col_name} {ddl}'))
+                conn.commit()
+            existing.add(col_name)
+            print(f'Added column {col_name} to cgw_flow_metres')
+    except Exception as e:
+        print(f'Migration error for cgw_flow_metres flow metre details: {e}')
+
+
+migrate_cgw_flow_metres_flow_metre_details_columns()
+
+
+def migrate_cgw_flow_metres_piezometer_details_json():
+    """Add piezometer_details_json to cgw_flow_metres if missing."""
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        existing = {col['name'] for col in inspector.get_columns('cgw_flow_metres')}
+        if 'piezometer_details_json' in existing:
+            return
+        ddl = 'LONGTEXT NULL' if DATABASE_URL.startswith('mysql') else 'TEXT NULL'
+        with engine.connect() as conn:
+            conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN piezometer_details_json {ddl}'))
+            conn.commit()
+        print('Added column piezometer_details_json to cgw_flow_metres')
+    except Exception as e:
+        print(f'Migration error for piezometer_details_json: {e}')
+
+
+migrate_cgw_flow_metres_piezometer_details_json()
+
+
+def migrate_cgw_flow_metres_telemetry_portal_columns():
+    """Add telemetry portal URL / login columns to cgw_flow_metres if missing."""
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        existing = {col['name'] for col in inspector.get_columns('cgw_flow_metres')}
+        specs = [
+            ('telemetry_portal_url', 'VARCHAR(500) NULL'),
+            ('telemetry_username', 'VARCHAR(200) NULL'),
+            ('telemetry_password', 'VARCHAR(255) NULL'),
+        ]
+        for col_name, ddl in specs:
+            if col_name in existing:
+                continue
+            with engine.connect() as conn:
+                if DATABASE_URL.startswith('mysql'):
+                    conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN {col_name} {ddl}'))
+                else:
+                    conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN {col_name} {ddl}'))
+                conn.commit()
+            existing.add(col_name)
+            print(f'Added column {col_name} to cgw_flow_metres')
+    except Exception as e:
+        print(f'Migration error for telemetry portal columns: {e}')
+
+
+migrate_cgw_flow_metres_telemetry_portal_columns()
 
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
@@ -2190,7 +2330,21 @@ class CgwFileAttachment(BaseModel):
     url: str
 
 
-CGW_MEDIA_ATTACHMENT_KEYS = ('flow_meter', 'telemetry', 'service_report', 'calibration_certificate', 'tax_invoice')
+CGW_MEDIA_ATTACHMENT_KEYS = (
+    'flow_meter',
+    'telemetry',
+    'bw_geo_flowmeter',
+    'service_report',
+    'calibration_certificate',
+    'tax_invoice',
+    'telemetry_excel_prior',
+    'telemetry_service_prior',
+    'piezometer_bw',
+    'piezometer_calibration',
+    'piezometer_telemetry',
+    'piezometer_excel_prior',
+    'piezometer_service_report',
+)
 
 
 class CGWFlowMetre(BaseModel):
@@ -2216,6 +2370,33 @@ class CGWFlowMetre(BaseModel):
     renewal_date: Optional[str] = None
     review: Optional[str] = None
     calibration_certificate: Optional[str] = None
+    flow_meter_make: Optional[str] = None
+    flow_meter_size: Optional[str] = None
+    flow_meter_serial: Optional[str] = None
+    calibration_valid_from: Optional[str] = None
+    calibration_valid_to: Optional[str] = None
+    telemetry_applicable: Optional[str] = None
+    telemetry_company: Optional[str] = None
+    telemetry_company_other: Optional[str] = None
+    telemetry_communication_via: Optional[str] = None
+    telemetry_sim_provider: Optional[str] = None
+    telemetry_sim_provider_other: Optional[str] = None
+    telemetry_sim_number: Optional[str] = None
+    telemetry_sim_valid_from: Optional[str] = None
+    telemetry_sim_valid_to: Optional[str] = None
+    telemetry_product_code: Optional[str] = None
+    telemetry_serial_number: Optional[str] = None
+    telemetry_portal_url: Optional[str] = None
+    telemetry_username: Optional[str] = None
+    telemetry_password: Optional[str] = None
+    telemetry_valid_from: Optional[str] = None
+    telemetry_valid_to: Optional[str] = None
+    telemetry_uploaded_previous_year: Optional[str] = None
+    telemetry_previous_serial: Optional[str] = None
+    telemetry_previous_data_available: Optional[str] = None
+    telemetry_previous_data_from: Optional[str] = None
+    telemetry_previous_data_to: Optional[str] = None
+    piezometer_details_json: Optional[str] = None
     remarks: Optional[str] = None
     noc_document_url: Optional[str] = None
     noc_project_name: Optional[str] = None
@@ -2231,7 +2412,14 @@ class CGWFlowMetre(BaseModel):
     noc_permitted_m3_per_year: Optional[str] = None
     noc_existing_bw_count: Optional[str] = None
     noc_total_proposed_bw_count: Optional[str] = None
+    noc_flowmeter_applicable: Optional[str] = None
+    noc_flowmeter_count: Optional[str] = None
     noc_piezometer_applicable: Optional[str] = None
+    noc_piezometer_count: Optional[str] = None
+    noc_bhuneer_user_id: Optional[str] = None
+    noc_bhuneer_password: Optional[str] = None
+    noc_nocap_user_id: Optional[str] = None
+    noc_nocap_password: Optional[str] = None
     cgw_attachments: Optional[Dict[str, List[CgwFileAttachment]]] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
@@ -2256,12 +2444,66 @@ class CGWFlowMetreCreate(BaseModel):
     renewal_date: Optional[str] = None
     review: Optional[str] = None
     remarks: Optional[str] = None
+    flow_meter_make: Optional[str] = None
+    flow_meter_size: Optional[str] = None
+    flow_meter_serial: Optional[str] = None
+    calibration_valid_from: Optional[str] = None
+    calibration_valid_to: Optional[str] = None
+    telemetry_applicable: Optional[str] = None
+    telemetry_company: Optional[str] = None
+    telemetry_company_other: Optional[str] = None
+    telemetry_communication_via: Optional[str] = None
+    telemetry_sim_provider: Optional[str] = None
+    telemetry_sim_provider_other: Optional[str] = None
+    telemetry_sim_number: Optional[str] = None
+    telemetry_sim_valid_from: Optional[str] = None
+    telemetry_sim_valid_to: Optional[str] = None
+    telemetry_product_code: Optional[str] = None
+    telemetry_serial_number: Optional[str] = None
+    telemetry_portal_url: Optional[str] = None
+    telemetry_username: Optional[str] = None
+    telemetry_password: Optional[str] = None
+    telemetry_valid_from: Optional[str] = None
+    telemetry_valid_to: Optional[str] = None
+    telemetry_uploaded_previous_year: Optional[str] = None
+    telemetry_previous_serial: Optional[str] = None
+    telemetry_previous_data_available: Optional[str] = None
+    telemetry_previous_data_from: Optional[str] = None
+    telemetry_previous_data_to: Optional[str] = None
+    piezometer_details_json: Optional[str] = None
 
 class CGWFlowMetreEquipmentLine(BaseModel):
     equipment_name: Optional[str] = None
     flowmeter_details: Optional[str] = None
     product_code: Optional[str] = None
     model_no: Optional[str] = None
+    flow_meter_make: Optional[str] = None
+    flow_meter_size: Optional[str] = None
+    flow_meter_serial: Optional[str] = None
+    calibration_valid_from: Optional[str] = None
+    calibration_valid_to: Optional[str] = None
+    telemetry_applicable: Optional[str] = None
+    telemetry_company: Optional[str] = None
+    telemetry_company_other: Optional[str] = None
+    telemetry_communication_via: Optional[str] = None
+    telemetry_sim_provider: Optional[str] = None
+    telemetry_sim_provider_other: Optional[str] = None
+    telemetry_sim_number: Optional[str] = None
+    telemetry_sim_valid_from: Optional[str] = None
+    telemetry_sim_valid_to: Optional[str] = None
+    telemetry_product_code: Optional[str] = None
+    telemetry_serial_number: Optional[str] = None
+    telemetry_portal_url: Optional[str] = None
+    telemetry_username: Optional[str] = None
+    telemetry_password: Optional[str] = None
+    telemetry_valid_from: Optional[str] = None
+    telemetry_valid_to: Optional[str] = None
+    telemetry_uploaded_previous_year: Optional[str] = None
+    telemetry_previous_serial: Optional[str] = None
+    telemetry_previous_data_available: Optional[str] = None
+    telemetry_previous_data_from: Optional[str] = None
+    telemetry_previous_data_to: Optional[str] = None
+    piezometer_details_json: Optional[str] = None
 
 class CGWFlowMetreBulkCreate(BaseModel):
     customer_id: str
@@ -2313,7 +2555,41 @@ class CGWFlowMetreUpdate(BaseModel):
     noc_permitted_m3_per_year: Optional[str] = None
     noc_existing_bw_count: Optional[str] = None
     noc_total_proposed_bw_count: Optional[str] = None
+    noc_flowmeter_applicable: Optional[str] = None
+    noc_flowmeter_count: Optional[str] = None
     noc_piezometer_applicable: Optional[str] = None
+    noc_piezometer_count: Optional[str] = None
+    noc_bhuneer_user_id: Optional[str] = None
+    noc_bhuneer_password: Optional[str] = None
+    noc_nocap_user_id: Optional[str] = None
+    noc_nocap_password: Optional[str] = None
+    flow_meter_make: Optional[str] = None
+    flow_meter_size: Optional[str] = None
+    flow_meter_serial: Optional[str] = None
+    calibration_valid_from: Optional[str] = None
+    calibration_valid_to: Optional[str] = None
+    telemetry_applicable: Optional[str] = None
+    telemetry_company: Optional[str] = None
+    telemetry_company_other: Optional[str] = None
+    telemetry_communication_via: Optional[str] = None
+    telemetry_sim_provider: Optional[str] = None
+    telemetry_sim_provider_other: Optional[str] = None
+    telemetry_sim_number: Optional[str] = None
+    telemetry_sim_valid_from: Optional[str] = None
+    telemetry_sim_valid_to: Optional[str] = None
+    telemetry_product_code: Optional[str] = None
+    telemetry_serial_number: Optional[str] = None
+    telemetry_portal_url: Optional[str] = None
+    telemetry_username: Optional[str] = None
+    telemetry_password: Optional[str] = None
+    telemetry_valid_from: Optional[str] = None
+    telemetry_valid_to: Optional[str] = None
+    telemetry_uploaded_previous_year: Optional[str] = None
+    telemetry_previous_serial: Optional[str] = None
+    telemetry_previous_data_available: Optional[str] = None
+    telemetry_previous_data_from: Optional[str] = None
+    telemetry_previous_data_to: Optional[str] = None
+    piezometer_details_json: Optional[str] = None
 
 # ============= DEPENDENCY =============
 
@@ -3099,6 +3375,13 @@ def delete_customer(customer_id: str, current_user: UserModel = Depends(get_curr
 # ============= CGW FLOW METRE INVENTORY =============
 
 _CGW_MEDIA_ALLOWED_EXT = frozenset({'.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif'})
+_CGW_MEDIA_EXCEL_EXT = frozenset({'.xlsx', '.xls', '.csv'})
+
+
+def _cgw_media_allowed_extensions_for_category(category: str) -> frozenset:
+    if category in ('telemetry_excel_prior', 'piezometer_excel_prior'):
+        return _CGW_MEDIA_EXCEL_EXT
+    return _CGW_MEDIA_ALLOWED_EXT
 
 
 def _cgw_media_buckets_empty() -> Dict[str, List[dict]]:
@@ -3195,6 +3478,33 @@ def create_cgw_flow_metres_bulk(
             flowmeter_details=eq.flowmeter_details,
             product_code=eq.product_code,
             model_no=eq.model_no,
+            flow_meter_make=eq.flow_meter_make,
+            flow_meter_size=eq.flow_meter_size,
+            flow_meter_serial=eq.flow_meter_serial,
+            calibration_valid_from=eq.calibration_valid_from,
+            calibration_valid_to=eq.calibration_valid_to,
+            telemetry_applicable=eq.telemetry_applicable,
+            telemetry_company=eq.telemetry_company,
+            telemetry_company_other=eq.telemetry_company_other,
+            telemetry_communication_via=eq.telemetry_communication_via,
+            telemetry_sim_provider=eq.telemetry_sim_provider,
+            telemetry_sim_provider_other=eq.telemetry_sim_provider_other,
+            telemetry_sim_number=eq.telemetry_sim_number,
+            telemetry_sim_valid_from=eq.telemetry_sim_valid_from,
+            telemetry_sim_valid_to=eq.telemetry_sim_valid_to,
+            telemetry_product_code=eq.telemetry_product_code,
+            telemetry_serial_number=eq.telemetry_serial_number,
+            telemetry_portal_url=eq.telemetry_portal_url,
+            telemetry_username=eq.telemetry_username,
+            telemetry_password=eq.telemetry_password,
+            telemetry_valid_from=eq.telemetry_valid_from,
+            telemetry_valid_to=eq.telemetry_valid_to,
+            telemetry_uploaded_previous_year=eq.telemetry_uploaded_previous_year,
+            telemetry_previous_serial=eq.telemetry_previous_serial,
+            telemetry_previous_data_available=eq.telemetry_previous_data_available,
+            telemetry_previous_data_from=eq.telemetry_previous_data_from,
+            telemetry_previous_data_to=eq.telemetry_previous_data_to,
+            piezometer_details_json=eq.piezometer_details_json,
             system_mobile_number=data.system_mobile_number,
             person_mobile_number=data.person_mobile_number,
             email_id=data.email_id,
@@ -3244,6 +3554,33 @@ def create_cgw_flow_metre(data: CGWFlowMetreCreate, current_user: UserModel = De
         # UI sends `product_code` + `model_no`; the DB does not have `telemetric_system`.
         product_code=data.product_code,
         model_no=data.model_no,
+        flow_meter_make=data.flow_meter_make,
+        flow_meter_size=data.flow_meter_size,
+        flow_meter_serial=data.flow_meter_serial,
+        calibration_valid_from=data.calibration_valid_from,
+        calibration_valid_to=data.calibration_valid_to,
+        telemetry_applicable=data.telemetry_applicable,
+        telemetry_company=data.telemetry_company,
+        telemetry_company_other=data.telemetry_company_other,
+        telemetry_communication_via=data.telemetry_communication_via,
+        telemetry_sim_provider=data.telemetry_sim_provider,
+        telemetry_sim_provider_other=data.telemetry_sim_provider_other,
+        telemetry_sim_number=data.telemetry_sim_number,
+        telemetry_sim_valid_from=data.telemetry_sim_valid_from,
+        telemetry_sim_valid_to=data.telemetry_sim_valid_to,
+        telemetry_product_code=data.telemetry_product_code,
+        telemetry_serial_number=data.telemetry_serial_number,
+        telemetry_portal_url=data.telemetry_portal_url,
+        telemetry_username=data.telemetry_username,
+        telemetry_password=data.telemetry_password,
+        telemetry_valid_from=data.telemetry_valid_from,
+        telemetry_valid_to=data.telemetry_valid_to,
+        telemetry_uploaded_previous_year=data.telemetry_uploaded_previous_year,
+        telemetry_previous_serial=data.telemetry_previous_serial,
+        telemetry_previous_data_available=data.telemetry_previous_data_available,
+        telemetry_previous_data_from=data.telemetry_previous_data_from,
+        telemetry_previous_data_to=data.telemetry_previous_data_to,
+        piezometer_details_json=data.piezometer_details_json,
         system_mobile_number=data.system_mobile_number,
         person_mobile_number=data.person_mobile_number,
         email_id=data.email_id,
@@ -3288,6 +3625,24 @@ def get_cgw_by_customer(customer_id: str, current_user: UserModel = Depends(get_
     for it in items:
         _hydrate_cgw_flow_metre_attachments(it)
     return items
+
+
+@api_router.get('/cgw-flow-metres/customer/{customer_id}/telemetry-serial-options')
+def cgw_telemetry_serial_options(
+    customer_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Distinct telemetry serial values for this customer (for prior-year serial dropdown)."""
+    rows = db.query(CGWFlowMetreModel).filter(CGWFlowMetreModel.customer_id == customer_id).all()
+    found: set = set()
+    for it in rows:
+        for col in ('telemetry_serial_number', 'telemetry_previous_serial'):
+            v = (getattr(it, col, None) or '').strip()
+            if v:
+                found.add(v)
+    return {'serials': sorted(found)}
+
 
 @api_router.put('/cgw-flow-metres/{inventory_id}', response_model=CGWFlowMetre)
 def update_cgw_flow_metre(inventory_id: str, data: CGWFlowMetreUpdate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -3337,11 +3692,13 @@ def cgw_upload_media_attachment(
         raise HTTPException(status_code=400, detail='No file provided')
 
     ext = Path(file.filename).suffix.lower()
-    if ext not in _CGW_MEDIA_ALLOWED_EXT:
-        raise HTTPException(
-            status_code=400,
-            detail='Allowed file types: PDF, JPG, JPEG, PNG, WEBP, GIF',
-        )
+    allowed_ext = _cgw_media_allowed_extensions_for_category(category)
+    if ext not in allowed_ext:
+        if category in ('telemetry_excel_prior', 'piezometer_excel_prior'):
+            detail = 'Allowed file types for Excel upload: XLSX, XLS, CSV'
+        else:
+            detail = 'Allowed file types: PDF, JPG, JPEG, PNG, WEBP, GIF'
+        raise HTTPException(status_code=400, detail=detail)
 
     file_content = file.file.read()
     if len(file_content) > 25 * 1024 * 1024:
@@ -3448,7 +3805,14 @@ def upload_or_update_cgw_noc(
     permitted_m3_per_year: Optional[str] = Form(None),
     existing_bw_count: Optional[str] = Form(None),
     total_proposed_bw_count: Optional[str] = Form(None),
+    flowmeter_applicable: Optional[str] = Form(None),
+    flowmeter_count: Optional[str] = Form(None),
     piezometer_applicable: Optional[str] = Form(None),
+    piezometer_count: Optional[str] = Form(None),
+    bhuneer_user_id: Optional[str] = Form(None),
+    bhuneer_password: Optional[str] = Form(None),
+    nocap_user_id: Optional[str] = Form(None),
+    nocap_password: Optional[str] = Form(None),
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -3495,14 +3859,26 @@ def upload_or_update_cgw_noc(
     item.noc_permitted_m3_per_year = _cgw_norm_form_str(permitted_m3_per_year)
     item.noc_existing_bw_count = _cgw_norm_form_str(existing_bw_count)
     item.noc_total_proposed_bw_count = _cgw_norm_form_str(total_proposed_bw_count)
+    item.noc_flowmeter_applicable = _cgw_norm_form_str(flowmeter_applicable)
+    fm_app = (item.noc_flowmeter_applicable or '').lower()
+    item.noc_flowmeter_count = _cgw_norm_form_str(flowmeter_count) if fm_app == 'yes' else None
     item.noc_piezometer_applicable = _cgw_norm_form_str(piezometer_applicable)
+    pz_app = (item.noc_piezometer_applicable or '').lower()
+    item.noc_piezometer_count = _cgw_norm_form_str(piezometer_count) if pz_app == 'yes' else None
+    item.noc_bhuneer_user_id = _cgw_norm_form_str(bhuneer_user_id)
+    item.noc_bhuneer_password = _cgw_norm_form_str(bhuneer_password)
+    _nocap_uid = _cgw_norm_form_str(nocap_user_id)
+    item.noc_nocap_user_id = _nocap_uid.lower() if _nocap_uid else None
+    item.noc_nocap_password = _cgw_norm_form_str(nocap_password)
     for attr in (
         'noc_project_name', 'noc_project_address', 'noc_communication_address',
         'noc_no', 'noc_application_no', 'noc_project_status', 'noc_type',
         'noc_valid_from', 'noc_valid_upto',
         'noc_permitted_m3_per_day', 'noc_permitted_m3_per_year',
         'noc_existing_bw_count', 'noc_total_proposed_bw_count',
-        'noc_piezometer_applicable',
+        'noc_flowmeter_applicable', 'noc_flowmeter_count',
+        'noc_piezometer_applicable', 'noc_piezometer_count',
+        'noc_bhuneer_user_id', 'noc_bhuneer_password', 'noc_nocap_user_id', 'noc_nocap_password',
     ):
         flag_modified(item, attr)
     item.updated_at = datetime.now(timezone.utc)

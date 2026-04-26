@@ -10,16 +10,43 @@ import { toast } from 'sonner';
 import { Plus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Eye, Upload } from 'lucide-react';
 import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
 import { cn } from '@/lib/utils';
+import PiezometerAddWizardStep, {
+  EMPTY_PIEZO_ROW,
+  EMPTY_PIEZO_FILES,
+  piezoRowToPersist,
+} from './PiezometerAddWizardStep';
 
 const API = API_ENDPOINT;
 
-const CGW_MEDIA_KEYS = ['flow_meter', 'telemetry', 'service_report', 'calibration_certificate', 'tax_invoice'];
+const CGW_MEDIA_KEYS = [
+  'flow_meter',
+  'telemetry',
+  'bw_geo_flowmeter',
+  'service_report',
+  'calibration_certificate',
+  'tax_invoice',
+  'telemetry_excel_prior',
+  'telemetry_service_prior',
+  'piezometer_bw',
+  'piezometer_calibration',
+  'piezometer_telemetry',
+  'piezometer_excel_prior',
+  'piezometer_service_report',
+];
 const CGW_MEDIA_LABELS = {
   flow_meter: 'Flow meter (photo)',
   telemetry: 'Telemetry (photo)',
+  bw_geo_flowmeter: 'BW / flowmeter GEO photos',
   service_report: 'Service report (photo)',
   calibration_certificate: 'Calibration certificate (photo)',
   tax_invoice: 'Tax invoice (photo)',
+  telemetry_excel_prior: 'Telemetry prior-year (Excel)',
+  telemetry_service_prior: 'Telemetry prior-year service report',
+  piezometer_bw: 'Piezometer BW photos',
+  piezometer_calibration: 'Piezometer calibration',
+  piezometer_telemetry: 'Piezometer telemetry photos',
+  piezometer_excel_prior: 'Piezometer prior-year (Excel)',
+  piezometer_service_report: 'Piezometer service report',
 };
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 /** When true, shows the “Daily past-due renewal email” admin card (CGW inventory). */
@@ -28,8 +55,108 @@ const EMPTY_EQUIPMENT_ROW = {
   equipment_name: '',
   flowmeter_details: '',
   product_code: '',
-  model_no: ''
+  model_no: '',
+  flow_meter_make: 'UPC',
+  flow_meter_size: '',
+  flow_meter_serial: '',
+  calibration_valid_from: '',
+  calibration_valid_to: '',
+  telemetry_applicable: '',
+  telemetry_company: '',
+  telemetry_company_other: '',
+  telemetry_communication_via: '',
+  telemetry_sim_provider: '',
+  telemetry_sim_provider_other: '',
+  telemetry_sim_number: '',
+  telemetry_sim_valid_from: '',
+  telemetry_sim_valid_to: '',
+  telemetry_product_code: '',
+  telemetry_serial_number: '',
+  telemetry_portal_url: '',
+  telemetry_username: '',
+  telemetry_password: '',
+  telemetry_valid_from: '',
+  telemetry_valid_to: '',
+  telemetry_uploaded_previous_year: '',
+  telemetry_previous_serial_pick: '',
+  telemetry_previous_serial_free: '',
+  telemetry_previous_data_available: '',
+  telemetry_previous_data_from: '',
+  telemetry_previous_data_to: '',
 };
+
+/** Map UI equipment row to API payload (drops UI-only pick/free serial fields). */
+function equipmentRowToApiPayload(r) {
+  const pick = (r.telemetry_previous_serial_pick || '').trim();
+  const free = (r.telemetry_previous_serial_free || '').trim();
+  const telemetry_previous_serial = pick === '__manual__' ? free : pick;
+  const {
+    telemetry_previous_serial_pick: _p,
+    telemetry_previous_serial_free: _f,
+    ...rest
+  } = r;
+  return { ...rest, telemetry_previous_serial: telemetry_previous_serial || null };
+}
+
+/** In-memory image previews for wizard file picks; revokes blob URLs on change/unmount. */
+function LocalImagePreviews({ files }) {
+  const list = Array.isArray(files) ? files : [];
+  const [urls, setUrls] = useState([]);
+  useEffect(() => {
+    const imgs = list.filter((f) => f && typeof f.type === 'string' && f.type.startsWith('image/'));
+    const u = imgs.map((f) => URL.createObjectURL(f));
+    setUrls(u);
+    return () => {
+      u.forEach((x) => URL.revokeObjectURL(x));
+    };
+  }, [list]);
+  if (!urls.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      {urls.map((src, i) => (
+        <img
+          key={src}
+          src={src}
+          alt={list[i]?.name ? `Preview ${list[i].name}` : `Preview ${i + 1}`}
+          className="h-20 w-20 rounded border border-gray-200 object-cover bg-gray-100"
+        />
+      ))}
+    </div>
+  );
+}
+
+/** True if this line should be included in bulk create (pending files count for the same row index). */
+function equipmentRowIncludeInBulk(r, bundle = {}) {
+  const b = bundle || {};
+  if ((r.flow_meter_serial || '').trim()) return true;
+  if ((r.flow_meter_size || '').trim()) return true;
+  if ((r.calibration_valid_from || '').trim() || (r.calibration_valid_to || '').trim()) return true;
+  if (b.calibration_cert) return true;
+  if ((b.bwGeoPhotos || []).length > 0) return true;
+  if ((b.telemetryPhotoFiles || []).length > 0) return true;
+  if (b.telemetry_excel || b.telemetry_service) return true;
+  if (r.telemetry_applicable === 'yes') return true;
+  if (
+    (r.telemetry_product_code || '').trim() ||
+    (r.telemetry_serial_number || '').trim() ||
+    (r.telemetry_portal_url || '').trim() ||
+    (r.telemetry_username || '').trim() ||
+    (r.telemetry_password || '').trim() ||
+    (r.telemetry_valid_from || '').trim() ||
+    (r.telemetry_valid_to || '').trim()
+  ) {
+    return true;
+  }
+  if (
+    (r.telemetry_uploaded_previous_year || '').trim() ||
+    (r.telemetry_previous_data_available || '').trim() ||
+    (r.telemetry_previous_data_from || '').trim() ||
+    (r.telemetry_previous_data_to || '').trim()
+  ) {
+    return true;
+  }
+  return false;
+}
 const EMPTY_FORM = {
   customer_id: '',
   customer_name: '',
@@ -39,6 +166,33 @@ const EMPTY_FORM = {
   flowmeter_details: '',
   product_code: '',
   model_no: '',
+  flow_meter_make: 'UPC',
+  flow_meter_size: '',
+  flow_meter_serial: '',
+  calibration_valid_from: '',
+  calibration_valid_to: '',
+  telemetry_applicable: '',
+  telemetry_company: '',
+  telemetry_company_other: '',
+  telemetry_communication_via: '',
+  telemetry_sim_provider: '',
+  telemetry_sim_provider_other: '',
+  telemetry_sim_number: '',
+  telemetry_sim_valid_from: '',
+  telemetry_sim_valid_to: '',
+  telemetry_product_code: '',
+  telemetry_serial_number: '',
+  telemetry_portal_url: '',
+  telemetry_username: '',
+  telemetry_password: '',
+  telemetry_valid_from: '',
+  telemetry_valid_to: '',
+  telemetry_uploaded_previous_year: '',
+  telemetry_previous_serial: '',
+  telemetry_previous_data_available: '',
+  telemetry_previous_data_from: '',
+  telemetry_previous_data_to: '',
+  piezometer_details_json: '',
   system_mobile_number: '',
   person_mobile_number: '',
   email_id: '',
@@ -51,7 +205,18 @@ const EMPTY_FORM = {
   review: '',
   remarks: ''
 };
+/** Per-row pending uploads in add wizard (arrays kept stable for preview hooks). */
+const EMPTY_EQUIPMENT_FLOW_FILES = () => ({
+  bwGeoPhotos: [],
+  telemetryPhotoFiles: [],
+  service_report: undefined,
+});
+
 const EMPTY_NOC_FORM = {
+  bhuneer_user_id: '',
+  bhuneer_password: '',
+  nocap_user_id: '',
+  nocap_password: '',
   project_name: '',
   project_address: '',
   communication_address: '',
@@ -65,7 +230,10 @@ const EMPTY_NOC_FORM = {
   permitted_m3_per_year: '',
   existing_bw_count: '',
   total_proposed_bw_count: '',
+  flowmeter_applicable: '',
+  flowmeter_count: '',
   piezometer_applicable: '',
+  piezometer_count: '',
 };
 const FILTER_FIELDS = [
   'customer_name',
@@ -73,8 +241,17 @@ const FILTER_FIELDS = [
   'contact_person',
   'equipment_name',
   'flowmeter_details',
+  'flow_meter_make',
+  'flow_meter_size',
+  'flow_meter_serial',
+  'calibration_valid_from',
+  'calibration_valid_to',
   'product_code',
   'model_no',
+  'telemetry_company',
+  'telemetry_serial_number',
+  'noc_piezometer_applicable',
+  'noc_piezometer_count',
   'system_mobile_number',
   'person_mobile_number',
   'email_id',
@@ -94,8 +271,17 @@ const FILTER_LABELS = {
   contact_person: 'Contact Person',
   equipment_name: 'Equipment Name',
   flowmeter_details: 'Flowmeter/Piezometer Details',
+  flow_meter_make: 'Flow Meter Make',
+  flow_meter_size: 'Flow Meter Size',
+  flow_meter_serial: 'Flow Meter Serial',
+  calibration_valid_from: 'Calibration Valid From',
+  calibration_valid_to: 'Calibration Valid To',
   product_code: 'Product Code',
   model_no: 'Model No',
+  telemetry_company: 'Telemetry Company',
+  telemetry_serial_number: 'Telemetry Serial Number',
+  noc_piezometer_applicable: 'NOC Piezometer Applicable',
+  noc_piezometer_count: 'NOC Piezometer Count',
   system_mobile_number: 'System Mobile Number',
   person_mobile_number: 'Person Mobile Number',
   email_id: 'Email ID',
@@ -109,6 +295,13 @@ const FILTER_LABELS = {
   calibration_certificate: 'Calibration Certificate',
   remarks: 'Remarks'
 };
+const FILTER_GROUPS = [
+  { label: 'Customer & NOC', fields: ['customer_name', 'location', 'contact_person', 'noc_piezometer_applicable', 'noc_piezometer_count'] },
+  { label: 'Flow Metre', fields: ['equipment_name', 'flowmeter_details', 'flow_meter_make', 'flow_meter_size', 'flow_meter_serial', 'calibration_valid_from', 'calibration_valid_to'] },
+  { label: 'Telemetry', fields: ['product_code', 'model_no', 'telemetry_company', 'telemetry_serial_number'] },
+  { label: 'Contact & Access', fields: ['system_mobile_number', 'person_mobile_number', 'email_id', 'url_link', 'user_id', 'password'] },
+  { label: 'Lifecycle', fields: ['date_of_commissioning', 'status', 'renewal_date', 'review', 'calibration_certificate', 'remarks'] },
+];
 
 /** Parse commissioning / renewal strings (YYYY-MM-DD, DD/MM/YYYY, or Date.parse). */
 function parseGridDate(raw) {
@@ -246,6 +439,29 @@ function NocValidUptoColumnCell({ groupRows = [] }) {
   );
 }
 
+function piezometerSummaryCellText(item) {
+  const applicable = (item?.noc_piezometer_applicable || '').toString().trim().toLowerCase();
+  const nocCountRaw = (item?.noc_piezometer_count || '').toString().trim();
+  let detailsCount = 0;
+  try {
+    const parsed = typeof item?.piezometer_details_json === 'string'
+      ? JSON.parse(item.piezometer_details_json)
+      : item?.piezometer_details_json;
+    detailsCount = Array.isArray(parsed?.piezometers) ? parsed.piezometers.length : 0;
+  } catch (_e) {
+    detailsCount = 0;
+  }
+  if (!applicable && !nocCountRaw && !detailsCount) return '—';
+  return `${applicable === 'yes' ? 'Yes' : applicable === 'no' ? 'No' : '—'} | NOC: ${nocCountRaw || '—'} | Entered: ${detailsCount || 0}`;
+}
+
+function cgwFirstAttachmentCategory(item) {
+  for (const k of CGW_MEDIA_KEYS) {
+    if ((item?.cgw_attachments?.[k] || []).length > 0) return k;
+  }
+  return '';
+}
+
 const CGWFlowMetre = () => {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
@@ -256,9 +472,19 @@ const CGWFlowMetre = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [equipmentRows, setEquipmentRows] = useState([EMPTY_EQUIPMENT_ROW]);
+  /** Per equipment row index: optional files uploaded after inventory row exists (S3). */
+  const [equipmentFlowFiles, setEquipmentFlowFiles] = useState([EMPTY_EQUIPMENT_FLOW_FILES()]);
+  const [telemetrySerialOptions, setTelemetrySerialOptions] = useState([]);
   const [addStep, setAddStep] = useState(1);
+  const [piezometerRows, setPiezometerRows] = useState([]);
+  const [piezometerFiles, setPiezometerFiles] = useState([]);
   const [addNocForm, setAddNocForm] = useState(EMPTY_NOC_FORM);
   const [addNocFile, setAddNocFile] = useState(null);
+  /** Local blob URL for NOC PDF preview in Add wizard step 2 (same pattern as NOC popup). */
+  const [addNocPdfObjectUrl, setAddNocPdfObjectUrl] = useState('');
+  const [addNocPdfPreviewVisible, setAddNocPdfPreviewVisible] = useState(true);
+  /** True while add-wizard bulk create + uploads are in flight (piezometer Submit or Add Item). */
+  const [addWizardSubmitting, setAddWizardSubmitting] = useState(false);
   const [inlineEditId, setInlineEditId] = useState(null);
   const [inlineEditData, setInlineEditData] = useState(EMPTY_FORM);
   const [currentPage, setCurrentPage] = useState(1);
@@ -279,11 +505,27 @@ const CGWFlowMetre = () => {
   const [nocFile, setNocFile] = useState(null);
   const [nocLocalPreview, setNocLocalPreview] = useState('');
   const [nocForm, setNocForm] = useState({
+    bhuneer_user_id: '',
+    bhuneer_password: '',
+    nocap_user_id: '',
+    nocap_password: '',
     project_name: '',
+    project_address: '',
+    communication_address: '',
     noc_no: '',
     application_no: '',
+    project_status: '',
+    noc_type: '',
     valid_from: '',
     valid_upto: '',
+    permitted_m3_per_day: '',
+    permitted_m3_per_year: '',
+    existing_bw_count: '',
+    total_proposed_bw_count: '',
+    flowmeter_applicable: '',
+    flowmeter_count: '',
+    piezometer_applicable: '',
+    piezometer_count: '',
   });
   const [nocSaving, setNocSaving] = useState(false);
   /** Managers: false when opened via Preview/View — right panel locked until NOC button or "Edit NOC details". */
@@ -326,11 +568,27 @@ const CGWFlowMetre = () => {
     setNocFile(null);
     setNocTargetItem(item);
     setNocForm({
+      bhuneer_user_id: item.noc_bhuneer_user_id || '',
+      bhuneer_password: item.noc_bhuneer_password || '',
+      nocap_user_id: item.noc_nocap_user_id || '',
+      nocap_password: item.noc_nocap_password || '',
       project_name: item.noc_project_name || '',
+      project_address: item.noc_project_address || '',
+      communication_address: item.noc_communication_address || '',
       noc_no: item.noc_no || '',
       application_no: item.noc_application_no || '',
+      project_status: item.noc_project_status || '',
+      noc_type: item.noc_type || '',
       valid_from: item.noc_valid_from || '',
       valid_upto: item.noc_valid_upto || '',
+      permitted_m3_per_day: item.noc_permitted_m3_per_day || '',
+      permitted_m3_per_year: item.noc_permitted_m3_per_year || '',
+      existing_bw_count: item.noc_existing_bw_count || '',
+      total_proposed_bw_count: item.noc_total_proposed_bw_count || '',
+      flowmeter_applicable: item.noc_flowmeter_applicable || '',
+      flowmeter_count: item.noc_flowmeter_count || '',
+      piezometer_applicable: item.noc_piezometer_applicable || '',
+      piezometer_count: item.noc_piezometer_count || '',
     });
     const canEditNoc = ['Admin', 'HR'].includes(user?.role);
     setNocSideFieldsEditable(canEditNoc && !startInPreviewMode);
@@ -372,10 +630,26 @@ const CGWFlowMetre = () => {
       const fd = new FormData();
       if (nocFile) fd.append('file', nocFile);
       fd.append('project_name', nocForm.project_name || '');
+      fd.append('project_address', nocForm.project_address || '');
+      fd.append('communication_address', nocForm.communication_address || '');
       fd.append('noc_no', nocForm.noc_no || '');
       fd.append('application_no', nocForm.application_no || '');
+      fd.append('project_status', nocForm.project_status || '');
+      fd.append('noc_type', nocForm.noc_type || '');
       fd.append('valid_from', nocForm.valid_from || '');
       fd.append('valid_upto', nocForm.valid_upto || '');
+      fd.append('permitted_m3_per_day', nocForm.permitted_m3_per_day || '');
+      fd.append('permitted_m3_per_year', nocForm.permitted_m3_per_year || '');
+      fd.append('existing_bw_count', nocForm.existing_bw_count || '');
+      fd.append('total_proposed_bw_count', nocForm.total_proposed_bw_count || '');
+      fd.append('flowmeter_applicable', nocForm.flowmeter_applicable || '');
+      fd.append('flowmeter_count', nocForm.flowmeter_count || '');
+      fd.append('piezometer_applicable', nocForm.piezometer_applicable || '');
+      fd.append('piezometer_count', nocForm.piezometer_count || '');
+      fd.append('bhuneer_user_id', nocForm.bhuneer_user_id || '');
+      fd.append('bhuneer_password', nocForm.bhuneer_password || '');
+      fd.append('nocap_user_id', nocForm.nocap_user_id || '');
+      fd.append('nocap_password', nocForm.nocap_password || '');
       await axios.post(`${API}/cgw-flow-metres/${nocTargetItem.id}/noc`, fd, {
         headers: authHeaders(),
         timeout: 120000,
@@ -397,7 +671,84 @@ const CGWFlowMetre = () => {
     fetchItems();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (addNocPdfObjectUrl) URL.revokeObjectURL(addNocPdfObjectUrl);
+    };
+  }, [addNocPdfObjectUrl]);
+
   const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
+
+  /** Piezometer step follows flow metre when NOC says piezometers apply (count optional → defaults to 1). */
+  const needsPiezometerWizardStep = useMemo(() => {
+    if (String(addNocForm.piezometer_applicable || '').toLowerCase() !== 'yes') return false;
+    const raw = String(addNocForm.piezometer_count ?? '').trim();
+    if (raw === '') return true;
+    const n = parseInt(raw, 10);
+    return !Number.isNaN(n) && n > 0;
+  }, [addNocForm.piezometer_applicable, addNocForm.piezometer_count]);
+
+  const piezometerWizardCount = useMemo(() => {
+    if (!needsPiezometerWizardStep) return 0;
+    const raw = String(addNocForm.piezometer_count ?? '').trim();
+    if (raw === '') return 1;
+    const n = parseInt(raw, 10);
+    return !Number.isNaN(n) && n > 0 ? n : 1;
+  }, [needsPiezometerWizardStep, addNocForm.piezometer_count]);
+
+  const addWizardFinalStep = needsPiezometerWizardStep ? 4 : 3;
+
+  const addWizardStepDefs = useMemo(() => {
+    const s = [
+      { n: 1, title: 'Customer' },
+      { n: 2, title: 'NOC' },
+      { n: 3, title: 'Flow metre details' },
+    ];
+    if (needsPiezometerWizardStep) s.push({ n: 4, title: 'Piezometer' });
+    return s;
+  }, [needsPiezometerWizardStep]);
+
+  useEffect(() => {
+    if (!needsPiezometerWizardStep && addStep === 4) setAddStep(3);
+  }, [needsPiezometerWizardStep, addStep]);
+
+  useEffect(() => {
+    if (!dialogOpen || piezometerWizardCount <= 0) return;
+    setPiezometerRows((prev) => {
+      if (prev.length === piezometerWizardCount) return prev;
+      const next = prev.slice(0, piezometerWizardCount);
+      while (next.length < piezometerWizardCount) next.push({ ...EMPTY_PIEZO_ROW });
+      return next;
+    });
+    setPiezometerFiles((prev) => {
+      if (prev.length === piezometerWizardCount) return prev;
+      const next = prev.slice(0, piezometerWizardCount);
+      while (next.length < piezometerWizardCount) next.push(EMPTY_PIEZO_FILES());
+      return next;
+    });
+  }, [dialogOpen, piezometerWizardCount]);
+
+  useEffect(() => {
+    if (!dialogOpen || addStep < 3 || addStep > 4 || !formData.customer_id) {
+      setTelemetrySerialOptions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await axios.get(
+          `${API}/cgw-flow-metres/customer/${formData.customer_id}/telemetry-serial-options`,
+          { headers: authHeaders() }
+        );
+        if (!cancelled) setTelemetrySerialOptions(Array.isArray(res.data?.serials) ? res.data.serials : []);
+      } catch {
+        if (!cancelled) setTelemetrySerialOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, addStep, formData.customer_id]);
 
   useEffect(() => {
     if (!nocDialogOpen) {
@@ -559,20 +910,198 @@ const CGWFlowMetre = () => {
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const IMAGE_UPLOAD_TARGET_BYTES = 4 * 1024 * 1024; // 4 MB per image after compression
+  const NON_IMAGE_SOFT_LIMIT_BYTES = 8 * 1024 * 1024; // proxy-safe guidance for pdf/xls/csv etc.
+
+  const isLikelyImageFile = (file) => {
+    if (!file) return false;
+    if (typeof file.type === 'string' && file.type.startsWith('image/')) return true;
+    return /\.(jpe?g|png|webp|gif)$/i.test(file.name || '');
+  };
+
+  const compressImageFile = async (file, targetBytes = IMAGE_UPLOAD_TARGET_BYTES) => {
+    const objectUrl = URL.createObjectURL(file);
     try {
-      const { equipment_name, flowmeter_details, product_code, model_no, ...base } = formData;
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('Could not read image for compression'));
+        i.src = objectUrl;
+      });
+      const maxDimension = 1920;
+      const scale = Math.min(1, maxDimension / Math.max(img.width || 1, img.height || 1));
+      const outW = Math.max(1, Math.round(img.width * scale));
+      const outH = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = outW;
+      canvas.height = outH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas unavailable for image compression');
+      ctx.drawImage(img, 0, 0, outW, outH);
+
+      let quality = 0.82;
+      let best = null;
+      while (quality >= 0.45) {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+        if (!blob) break;
+        best = blob;
+        if (blob.size <= targetBytes) break;
+        quality -= 0.08;
+      }
+      if (!best) return file;
+      const compressed = new File([best], (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+      return compressed.size < file.size ? compressed : file;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  const prepareFileForUpload = async (file) => {
+    if (!isLikelyImageFile(file)) {
+      if (file.size > NON_IMAGE_SOFT_LIMIT_BYTES) {
+        throw new Error(
+          `File "${file.name}" is too large (${Math.ceil(file.size / (1024 * 1024))} MB). Non-image files cannot be auto-compressed; please upload a smaller file.`,
+        );
+      }
+      return file;
+    }
+    if (file.size <= IMAGE_UPLOAD_TARGET_BYTES) return file;
+    const compressed = await compressImageFile(file, IMAGE_UPLOAD_TARGET_BYTES);
+    if (compressed.size > NON_IMAGE_SOFT_LIMIT_BYTES) {
+      throw new Error(
+        `Image "${file.name}" is still too large after compression (${Math.ceil(compressed.size / (1024 * 1024))} MB). Please upload a smaller image.`,
+      );
+    }
+    return compressed;
+  };
+
+  const uploadCgwRowAttachment = async (inventoryRowId, category, file) => {
+    const uploadFile = await prepareFileForUpload(file);
+    const fd = new FormData();
+    fd.append('category', category);
+    fd.append('file', uploadFile);
+    try {
+      await axios.post(`${API}/cgw-flow-metres/${inventoryRowId}/media-attachments`, fd, {
+        headers: authHeaders(),
+        timeout: 120000,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
+    } catch (error) {
+      const status = Number(error?.response?.status || 0);
+      if (status === 413) {
+        throw new Error(
+          'Upload rejected by server (413: Request Entity Too Large). Reduce file size or ask admin to increase API upload limit.',
+        );
+      }
+      throw error;
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    if (addStep !== addWizardFinalStep) {
+      toast.error('Finish all steps before saving.');
+      return;
+    }
+    if (!validateFlowMetreWizardStep()) return;
+    if (!validatePiezometerWizardStep()) return;
+    if (addWizardSubmitting) return;
+    setAddWizardSubmitting(true);
+    try {
+      const piezometerDetailsPayload =
+        needsPiezometerWizardStep
+          ? JSON.stringify({
+              schema_version: 2,
+              noc_piezometer_count: piezometerWizardCount || null,
+              piezometers: piezometerRows.map((r) => piezoRowToPersist(r)),
+            })
+          : null;
+      const {
+        equipment_name,
+        flowmeter_details,
+        product_code,
+        model_no,
+        flow_meter_make: _fmm,
+        flow_meter_size: _fms,
+        flow_meter_serial: _fmse,
+        calibration_valid_from: _cvf,
+        calibration_valid_to: _cvt,
+        telemetry_applicable: _ta,
+        telemetry_company: _tc,
+        telemetry_company_other: _tco,
+        telemetry_communication_via: _tcv,
+        telemetry_sim_provider: _tsp,
+        telemetry_sim_provider_other: _tspo,
+        telemetry_sim_number: _tsn,
+        telemetry_sim_valid_from: _tsvf,
+        telemetry_sim_valid_to: _tsvt,
+        telemetry_product_code: _tpc,
+        telemetry_serial_number: _tsr,
+        telemetry_portal_url: _tpu,
+        telemetry_username: _tusr,
+        telemetry_password: _tpw,
+        telemetry_valid_from: _tvf,
+        telemetry_valid_to: _tvt,
+        telemetry_uploaded_previous_year: _tupy,
+        telemetry_previous_serial: _tps,
+        telemetry_previous_data_available: _tpda,
+        telemetry_previous_data_from: _tpdf,
+        telemetry_previous_data_to: _tpdt,
+        piezometer_details_json: _pdj,
+        ...base
+      } = formData;
+      const rowsForSubmit = [];
+      for (let i = 0; i < equipmentRows.length; i += 1) {
+        const r = equipmentRows[i];
+        const bundle = equipmentFlowFiles[i] || {};
+        if (!equipmentRowIncludeInBulk(r, bundle)) continue;
+        const apiRow = equipmentRowToApiPayload(r);
+        const serial = (apiRow.flow_meter_serial || '').trim();
+        const tSerial = (apiRow.telemetry_serial_number || '').trim();
+        const displayName =
+          (apiRow.equipment_name || '').trim() || serial || tSerial || `Flow metre line ${i + 1}`;
+        rowsForSubmit.push({
+          row: {
+            equipment_name: displayName || null,
+            flowmeter_details: null,
+            product_code: null,
+            model_no: null,
+            flow_meter_make: (apiRow.flow_meter_make || '').trim() || null,
+            flow_meter_size: (apiRow.flow_meter_size || '').trim() || null,
+            flow_meter_serial: (apiRow.flow_meter_serial || '').trim() || null,
+            calibration_valid_from: apiRow.calibration_valid_from || null,
+            calibration_valid_to: apiRow.calibration_valid_to || null,
+            telemetry_applicable: apiRow.telemetry_applicable || null,
+            telemetry_company: apiRow.telemetry_company || null,
+            telemetry_company_other: (apiRow.telemetry_company_other || '').trim() || null,
+            telemetry_communication_via: apiRow.telemetry_communication_via || null,
+            telemetry_sim_provider: apiRow.telemetry_sim_provider || null,
+            telemetry_sim_provider_other: (apiRow.telemetry_sim_provider_other || '').trim() || null,
+            telemetry_sim_number: (apiRow.telemetry_sim_number || '').trim() || null,
+            telemetry_sim_valid_from: apiRow.telemetry_sim_valid_from || null,
+            telemetry_sim_valid_to: apiRow.telemetry_sim_valid_to || null,
+            telemetry_product_code: (apiRow.telemetry_product_code || '').trim() || null,
+            telemetry_serial_number: (apiRow.telemetry_serial_number || '').trim() || null,
+            telemetry_portal_url: (apiRow.telemetry_portal_url || '').trim() || null,
+            telemetry_username: (apiRow.telemetry_username || '').trim() || null,
+            telemetry_password: (apiRow.telemetry_password || '').trim() || null,
+            telemetry_valid_from: apiRow.telemetry_valid_from || null,
+            telemetry_valid_to: apiRow.telemetry_valid_to || null,
+            telemetry_uploaded_previous_year: apiRow.telemetry_uploaded_previous_year || null,
+            telemetry_previous_serial: (apiRow.telemetry_previous_serial || '').trim() || null,
+            telemetry_previous_data_available: apiRow.telemetry_previous_data_available || null,
+            telemetry_previous_data_from: apiRow.telemetry_previous_data_from || null,
+            telemetry_previous_data_to: apiRow.telemetry_previous_data_to || null,
+            piezometer_details_json: piezometerDetailsPayload,
+          },
+          files: bundle,
+        });
+      }
+
       const payload = {
         ...base,
-        equipments: equipmentRows
-          .map(r => ({
-            equipment_name: (r.equipment_name || '').trim() || null,
-            flowmeter_details: (r.flowmeter_details || '').trim() || null,
-            product_code: (r.product_code || '').trim() || null,
-            model_no: (r.model_no || '').trim() || null
-          }))
-          .filter(r => r.equipment_name || r.flowmeter_details || r.product_code || r.model_no)
+        equipments: rowsForSubmit.map((x) => x.row),
       };
 
       if (!payload.equipments.length) {
@@ -585,7 +1114,71 @@ const CGWFlowMetre = () => {
       });
 
       const createdRows = Array.isArray(createdRes.data) ? createdRes.data : [];
+
+      for (let i = 0; i < createdRows.length; i += 1) {
+        const inv = createdRows[i];
+        const bundle = rowsForSubmit[i]?.files;
+        if (!inv?.id || !bundle) continue;
+        try {
+          if (bundle.calibration_cert) {
+            await uploadCgwRowAttachment(inv.id, 'calibration_certificate', bundle.calibration_cert);
+          }
+          if (bundle.service_report) {
+            await uploadCgwRowAttachment(inv.id, 'service_report', bundle.service_report);
+          }
+          if (bundle.telemetry_excel) {
+            await uploadCgwRowAttachment(inv.id, 'telemetry_excel_prior', bundle.telemetry_excel);
+          }
+          if (bundle.telemetry_service) {
+            await uploadCgwRowAttachment(inv.id, 'telemetry_service_prior', bundle.telemetry_service);
+          }
+          for (const f of bundle.bwGeoPhotos || []) {
+            await uploadCgwRowAttachment(inv.id, 'bw_geo_flowmeter', f);
+          }
+          for (const f of bundle.telemetryPhotoFiles || []) {
+            await uploadCgwRowAttachment(inv.id, 'telemetry', f);
+          }
+        } catch (uploadErr) {
+          toast.error(uploadErr.response?.data?.detail || 'Saved row but an attachment upload failed');
+          fetchItems();
+          return;
+        }
+      }
+
+      if (needsPiezometerWizardStep && createdRows.length && piezometerRows.length) {
+        for (let pi = 0; pi < piezometerRows.length; pi += 1) {
+          const inv = createdRows[Math.min(pi, createdRows.length - 1)];
+          if (!inv?.id) continue;
+          const pb = piezometerFiles[pi] || {};
+          try {
+            for (const f of pb.bwPhotos || []) {
+              await uploadCgwRowAttachment(inv.id, 'piezometer_bw', f);
+            }
+            if (pb.calibrationCert) {
+              await uploadCgwRowAttachment(inv.id, 'piezometer_calibration', pb.calibrationCert);
+            }
+            for (const f of pb.telemetryPhotos || []) {
+              await uploadCgwRowAttachment(inv.id, 'piezometer_telemetry', f);
+            }
+            if (pb.telemetryExcel) {
+              await uploadCgwRowAttachment(inv.id, 'piezometer_excel_prior', pb.telemetryExcel);
+            }
+            if (pb.priorTelemetryService) {
+              await uploadCgwRowAttachment(inv.id, 'piezometer_service_report', pb.priorTelemetryService);
+            }
+          } catch (pzErr) {
+            toast.error(pzErr.response?.data?.detail || 'Piezometer file upload failed');
+            fetchItems();
+            return;
+          }
+        }
+      }
+
       const hasNocMeta = !!(
+        addNocForm.bhuneer_user_id ||
+        addNocForm.bhuneer_password ||
+        addNocForm.nocap_user_id ||
+        addNocForm.nocap_password ||
         addNocForm.project_name ||
         addNocForm.project_address ||
         addNocForm.communication_address ||
@@ -599,7 +1192,11 @@ const CGWFlowMetre = () => {
         addNocForm.permitted_m3_per_year ||
         addNocForm.existing_bw_count ||
         addNocForm.total_proposed_bw_count ||
-        addNocForm.piezometer_applicable
+        addNocForm.flowmeter_applicable ||
+        addNocForm.flowmeter_count ||
+        addNocForm.piezometer_applicable ||
+        addNocForm.piezometer_count ||
+        (addNocForm.piezometer_applicable === 'yes' && needsPiezometerWizardStep)
       );
 
       if (createdRows.length && (addNocFile || hasNocMeta)) {
@@ -620,7 +1217,21 @@ const CGWFlowMetre = () => {
             fd.append('permitted_m3_per_year', addNocForm.permitted_m3_per_year || '');
             fd.append('existing_bw_count', addNocForm.existing_bw_count || '');
             fd.append('total_proposed_bw_count', addNocForm.total_proposed_bw_count || '');
+            fd.append('flowmeter_applicable', addNocForm.flowmeter_applicable || '');
+            fd.append('flowmeter_count', addNocForm.flowmeter_count || '');
             fd.append('piezometer_applicable', addNocForm.piezometer_applicable || '');
+            fd.append(
+              'piezometer_count',
+              addNocForm.piezometer_applicable === 'yes'
+                ? needsPiezometerWizardStep
+                  ? String(piezometerWizardCount)
+                  : addNocForm.piezometer_count || ''
+                : '',
+            );
+            fd.append('bhuneer_user_id', addNocForm.bhuneer_user_id || '');
+            fd.append('bhuneer_password', addNocForm.bhuneer_password || '');
+            fd.append('nocap_user_id', addNocForm.nocap_user_id || '');
+            fd.append('nocap_password', addNocForm.nocap_password || '');
             await axios.post(`${API}/cgw-flow-metres/${row.id}/noc`, fd, {
               headers: authHeaders(),
               timeout: 120000,
@@ -629,6 +1240,10 @@ const CGWFlowMetre = () => {
             });
           } else {
             await axios.put(`${API}/cgw-flow-metres/${row.id}`, {
+              noc_bhuneer_user_id: addNocForm.bhuneer_user_id || null,
+              noc_bhuneer_password: addNocForm.bhuneer_password || null,
+              noc_nocap_user_id: (addNocForm.nocap_user_id || '').trim().toLowerCase() || null,
+              noc_nocap_password: addNocForm.nocap_password || null,
               noc_project_name: addNocForm.project_name || '',
               noc_project_address: addNocForm.project_address || '',
               noc_communication_address: addNocForm.communication_address || '',
@@ -642,7 +1257,15 @@ const CGWFlowMetre = () => {
               noc_permitted_m3_per_year: addNocForm.permitted_m3_per_year || '',
               noc_existing_bw_count: addNocForm.existing_bw_count || '',
               noc_total_proposed_bw_count: addNocForm.total_proposed_bw_count || '',
+              noc_flowmeter_applicable: addNocForm.flowmeter_applicable || '',
+              noc_flowmeter_count: addNocForm.flowmeter_applicable === 'yes' ? (addNocForm.flowmeter_count || '') : '',
               noc_piezometer_applicable: addNocForm.piezometer_applicable || '',
+              noc_piezometer_count:
+                addNocForm.piezometer_applicable === 'yes'
+                  ? needsPiezometerWizardStep
+                    ? String(piezometerWizardCount)
+                    : addNocForm.piezometer_count || ''
+                  : '',
             }, { headers: authHeaders() });
           }
         }
@@ -654,6 +1277,8 @@ const CGWFlowMetre = () => {
       fetchItems();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Operation failed');
+    } finally {
+      setAddWizardSubmitting(false);
     }
   };
 
@@ -681,6 +1306,33 @@ const CGWFlowMetre = () => {
       flowmeter_details: item.flowmeter_details || '',
       product_code: item.product_code || '',
       model_no: item.model_no || '',
+      flow_meter_make: item.flow_meter_make || 'UPC',
+      flow_meter_size: item.flow_meter_size || '',
+      flow_meter_serial: item.flow_meter_serial || '',
+      calibration_valid_from: item.calibration_valid_from || '',
+      calibration_valid_to: item.calibration_valid_to || '',
+      telemetry_applicable: item.telemetry_applicable || '',
+      telemetry_company: item.telemetry_company || '',
+      telemetry_company_other: item.telemetry_company_other || '',
+      telemetry_communication_via: item.telemetry_communication_via || '',
+      telemetry_sim_provider: item.telemetry_sim_provider || '',
+      telemetry_sim_provider_other: item.telemetry_sim_provider_other || '',
+      telemetry_sim_number: item.telemetry_sim_number || '',
+      telemetry_sim_valid_from: item.telemetry_sim_valid_from || '',
+      telemetry_sim_valid_to: item.telemetry_sim_valid_to || '',
+      telemetry_product_code: item.telemetry_product_code || '',
+      telemetry_serial_number: item.telemetry_serial_number || '',
+      telemetry_portal_url: item.telemetry_portal_url || '',
+      telemetry_username: item.telemetry_username || '',
+      telemetry_password: item.telemetry_password || '',
+      telemetry_valid_from: item.telemetry_valid_from || '',
+      telemetry_valid_to: item.telemetry_valid_to || '',
+      telemetry_uploaded_previous_year: item.telemetry_uploaded_previous_year || '',
+      telemetry_previous_serial: item.telemetry_previous_serial || '',
+      telemetry_previous_data_available: item.telemetry_previous_data_available || '',
+      telemetry_previous_data_from: item.telemetry_previous_data_from || '',
+      telemetry_previous_data_to: item.telemetry_previous_data_to || '',
+      piezometer_details_json: item.piezometer_details_json || '',
       system_mobile_number: item.system_mobile_number || '',
       person_mobile_number: item.person_mobile_number || '',
       email_id: item.email_id || '',
@@ -721,17 +1373,123 @@ const CGWFlowMetre = () => {
   const resetForm = () => {
     setFormData(EMPTY_FORM);
     setEquipmentRows([EMPTY_EQUIPMENT_ROW]);
+    setEquipmentFlowFiles([EMPTY_EQUIPMENT_FLOW_FILES()]);
     setAddNocForm(EMPTY_NOC_FORM);
     setAddNocFile(null);
+    setAddNocPdfObjectUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+    setAddNocPdfPreviewVisible(true);
+    setPiezometerRows([]);
+    setPiezometerFiles([]);
     setAddStep(1);
+    setAddWizardSubmitting(false);
+  };
+
+  const handleAddNocWizardFilePicked = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    setAddNocPdfObjectUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+    if (!f) {
+      setAddNocFile(null);
+      return;
+    }
+    if (!f.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Only PDF files are allowed');
+      return;
+    }
+    const u = URL.createObjectURL(f);
+    setAddNocPdfObjectUrl(u);
+    setAddNocFile(f);
+    setAddNocPdfPreviewVisible(true);
+  };
+
+  const validatePiezometerWizardStep = () => {
+    if (!needsPiezometerWizardStep) return true;
+    const n = piezometerRows.length;
+    if (!n || n !== piezometerWizardCount) {
+      toast.error('Complete piezometer details for each unit (count must match NOC).');
+      return false;
+    }
+    for (let i = 0; i < n; i += 1) {
+      const r = piezometerRows[i];
+      if (r.telemetry_applicable === 'yes') {
+        if (!r.telemetry_company) {
+          toast.error(`Piezometer ${i + 1}: select telemetry company.`);
+          return false;
+        }
+        if (r.telemetry_company === 'other' && !(r.telemetry_company_other || '').trim()) {
+          toast.error(`Piezometer ${i + 1}: enter telemetry company (manual).`);
+          return false;
+        }
+        if (r.telemetry_communication_via === 'sim') {
+          if (!r.telemetry_sim_provider) {
+            toast.error(`Piezometer ${i + 1}: select SIM provider.`);
+            return false;
+          }
+          if (r.telemetry_sim_provider === 'other' && !(r.telemetry_sim_provider_other || '').trim()) {
+            toast.error(`Piezometer ${i + 1}: enter SIM provider (manual).`);
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  };
+
+  const validateFlowMetreWizardStep = () => {
+    const includedIdx = [];
+    for (let i = 0; i < equipmentRows.length; i += 1) {
+      const r = equipmentRows[i];
+      const bundle = equipmentFlowFiles[i] || {};
+      if (equipmentRowIncludeInBulk(r, bundle)) includedIdx.push(i);
+    }
+    if (!includedIdx.length) {
+      toast.error(
+        'Add at least one flow metre line: enter serial or size, set calibration dates, attach GEO/calibration/telemetry files, or complete the telemetry section.'
+      );
+      return false;
+    }
+    const missingServiceReport = includedIdx.filter((i) => !equipmentFlowFiles[i]?.service_report);
+    if (missingServiceReport.length) {
+      toast.error(
+        `Service report is required for each flow metre line. Add a file for line(s): ${missingServiceReport.map((n) => n + 1).join(', ')}.`
+      );
+      return false;
+    }
+    return true;
   };
 
   const goAddNextStep = () => {
-    if (addStep === 1 && !formData.customer_id) {
-      toast.error('Please select customer first');
+    if (addStep === 1) {
+      if (!formData.customer_id) {
+        toast.error('Please select customer first');
+        return;
+      }
+      setAddStep(2);
       return;
     }
-    setAddStep((s) => Math.min(3, s + 1));
+    if (addStep === 2) {
+      setAddStep(3);
+      return;
+    }
+    if (addStep === 3) {
+      if (!validateFlowMetreWizardStep()) return;
+      if (needsPiezometerWizardStep) {
+        const cnt = piezometerWizardCount;
+        if (cnt > 0) {
+          setPiezometerRows(Array.from({ length: cnt }, () => ({ ...EMPTY_PIEZO_ROW })));
+          setPiezometerFiles(Array.from({ length: cnt }, () => EMPTY_PIEZO_FILES()));
+        }
+        setAddStep(4);
+        return;
+      }
+      return;
+    }
   };
 
   const goAddPrevStep = () => setAddStep((s) => Math.max(1, s - 1));
@@ -840,15 +1598,7 @@ const CGWFlowMetre = () => {
     setMediaUploading(true);
     try {
       for (const f of list) {
-        const fd = new FormData();
-        fd.append('category', cat);
-        fd.append('file', f);
-        await axios.post(`${API}/cgw-flow-metres/${mediaDialogItem.id}/media-attachments`, fd, {
-          headers: authHeaders(),
-          timeout: 120000,
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-        });
+        await uploadCgwRowAttachment(mediaDialogItem.id, cat, f);
       }
       toast.success(list.length > 1 ? `${list.length} files uploaded` : 'File uploaded');
       const res = await axios.get(`${API}/cgw-flow-metres/${mediaDialogItem.id}`, { headers: authHeaders() });
@@ -1008,43 +1758,97 @@ const CGWFlowMetre = () => {
   }
 
   return (
-    <div className="space-y-3" data-testid="cgw-flow-metre-page">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2 relative">
-        <div className="flex-1">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-            <Input
-              placeholder="Search across all columns..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 border border-gray-300 h-9 rounded-md text-sm text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-            />
-          </div>
+    <div className="space-y-6" data-testid="cgw-flow-metre-page">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-gray-900">CGW Flow Metre</h1>
+          <p className="text-gray-600 text-sm mt-1 max-w-3xl">
+            Inventory, NOCs, and CGWA attachments per customer and equipment row.
+            <span className="text-gray-500">
+              {' '}
+              · {items.length} total {items.length === 1 ? 'row' : 'rows'}
+              {filteredItems.length !== items.length ? (
+                <>
+                  {' '}
+                  · {filteredItems.length} {filteredItems.length === 1 ? 'matches' : 'match'} search/filters
+                </>
+              ) : null}
+            </span>
+          </p>
         </div>
         {canManage && (
-          <div className="flex gap-2 shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              className="border-gray-300 text-gray-700 hover:bg-gray-50"
-              onClick={() => setShowColumnFilter((prev) => !prev)}
-              title="Filter specific column"
-            >
-              <Filter className="h-4 w-4 mr-2" />
-              Filter
-            </Button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="relative">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-gray-300 text-gray-700 hover:bg-gray-50 h-10"
+                onClick={() => setShowColumnFilter((prev) => !prev)}
+                title="Filter specific column"
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </Button>
+              {showColumnFilter && (
+                <Card className="absolute right-0 top-full z-30 mt-1 w-80 p-3 border border-gray-200 shadow-lg bg-white rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium text-gray-800">Filter specific column</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-gray-600"
+                      onClick={() => setShowColumnFilter(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    <select
+                      value={selectedFilterField}
+                      onChange={(e) => setSelectedFilterField(e.target.value)}
+                      className="w-full h-10 rounded-lg border border-gray-300 px-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    >
+                      {FILTER_GROUPS.map((group) => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.fields.map((field) => (
+                            <option key={field} value={field}>
+                              {FILTER_LABELS[field]}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <Input
+                      value={selectedFilterValue}
+                      onChange={(e) => setSelectedFilterValue(e.target.value)}
+                      placeholder="Type value to filter..."
+                      className="h-10 text-sm border border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                    />
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button type="button" size="sm" variant="outline" className="h-9 text-xs border-gray-300 text-gray-700 hover:bg-gray-50" onClick={handleClearColumnFilter}>
+                        Clear
+                      </Button>
+                      <Button type="button" size="sm" className="h-9 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={handleApplyColumnFilter}>
+                        Apply
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              )}
+            </div>
             <Dialog open={dialogOpen} onOpenChange={(open) => {
               setDialogOpen(open);
               if (!open) resetForm();
             }}>
               <DialogTrigger asChild>
-                <Button className="bg-blue-600 text-white hover:bg-blue-700" data-testid="add-item-button">
+                <Button className="bg-blue-600 text-white hover:bg-blue-700 h-10" data-testid="add-item-button">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Flow Metre
                 </Button>
               </DialogTrigger>
-            <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white rounded-lg border border-gray-200 shadow-xl p-0">
-              <div className="bg-blue-600 text-white p-6 rounded-t-lg">
+            <DialogContent className="flex h-[min(96vh,100dvh)] max-h-[min(96vh,100dvh)] w-[min(1600px,98vw)] max-w-[min(1600px,98vw)] flex-col overflow-hidden bg-white rounded-lg border border-gray-200 shadow-xl p-0">
+              <div className="bg-blue-600 text-white p-6 rounded-t-lg shrink-0">
                 <DialogHeader>
                   <DialogTitle className="text-xl font-bold text-white">Add New Flow Metre</DialogTitle>
                   <p className="text-blue-100 text-sm mt-1">
@@ -1052,13 +1856,12 @@ const CGWFlowMetre = () => {
                   </p>
                 </DialogHeader>
               </div>
-              <form onSubmit={handleSubmit} className="space-y-6 p-6">
+              <form
+                onSubmit={(e) => e.preventDefault()}
+                className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6"
+              >
                 <div className="flex items-center justify-between gap-2">
-                  {[
-                    { n: 1, title: 'Customer' },
-                    { n: 2, title: 'NOC' },
-                    { n: 3, title: 'Flow Metre Details' },
-                  ].map((step) => (
+                  {addWizardStepDefs.map((step, si) => (
                     <div key={step.n} className="flex items-center gap-2 flex-1">
                       <div
                         className={`h-7 w-7 rounded-full text-xs font-semibold flex items-center justify-center ${
@@ -1070,7 +1873,9 @@ const CGWFlowMetre = () => {
                       <span className={`text-xs font-medium ${addStep >= step.n ? 'text-blue-700' : 'text-gray-500'}`}>
                         {step.title}
                       </span>
-                      {step.n < 3 && <div className={`h-px flex-1 ${addStep > step.n ? 'bg-blue-500' : 'bg-gray-200'}`} />}
+                      {si < addWizardStepDefs.length - 1 ? (
+                        <div className={`h-px flex-1 ${addStep > step.n ? 'bg-blue-500' : 'bg-gray-200'}`} />
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1121,17 +1926,111 @@ const CGWFlowMetre = () => {
 
                 {addStep === 2 && (
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium text-gray-700">NOC PDF (optional)</Label>
-                      <Input
-                        type="file"
-                        accept=".pdf,application/pdf"
-                        onChange={(e) => setAddNocFile(e.target.files?.[0] || null)}
-                        className="h-11"
-                      />
-                      <p className="text-[11px] text-gray-500">If selected, same NOC PDF will be attached to all created equipment rows.</p>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-5">
+                      <div className="min-w-0 space-y-2 lg:sticky lg:top-0 lg:self-start">
+                        {!addNocFile ? (
+                          <>
+                            <Label className="text-sm font-medium text-gray-700">NOC PDF (optional)</Label>
+                            <Input
+                              type="file"
+                              accept=".pdf,application/pdf"
+                              onChange={handleAddNocWizardFilePicked}
+                              className="h-11"
+                            />
+                            <p className="text-[11px] text-gray-500">
+                              If selected, the same NOC PDF is attached to every equipment row you create. Preview below while you fill the form.
+                            </p>
+                            <p className="text-[11px] text-gray-400 pt-1">Choose a PDF to open an inline preview (same as the NOC popup).</p>
+                          </>
+                        ) : null}
+                        {addNocFile && addNocPdfObjectUrl ? (
+                          <div className="space-y-2 pt-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs"
+                                onClick={() => setAddNocPdfPreviewVisible((v) => !v)}
+                              >
+                                <Eye className="h-3.5 w-3.5 mr-1" />
+                                {addNocPdfPreviewVisible ? 'Hide PDF preview' : 'Show PDF preview'}
+                              </Button>
+                              <label className="text-[11px] font-medium text-blue-600 hover:text-blue-800 cursor-pointer shrink-0 underline-offset-2 hover:underline">
+                                Replace PDF
+                                <input
+                                  type="file"
+                                  accept=".pdf,application/pdf"
+                                  onChange={handleAddNocWizardFilePicked}
+                                  className="sr-only"
+                                />
+                              </label>
+                              <span className="text-[11px] text-gray-500 truncate max-w-[200px]" title={addNocFile.name}>
+                                {addNocFile.name}
+                              </span>
+                            </div>
+                            {addNocPdfPreviewVisible ? (
+                              <div className="rounded-md border border-gray-200 overflow-hidden bg-neutral-900">
+                                <iframe
+                                  title="NOC PDF preview"
+                                  src={addNocPdfObjectUrl}
+                                  className="h-[min(72vh,720px)] min-h-[320px] w-full border-0 bg-white"
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : addNocFile ? (
+                          <p className="text-[11px] text-amber-700 pt-1">Preparing preview…</p>
+                        ) : null}
+                      </div>
+                      <div className="min-w-0 w-full shrink-0 space-y-4 lg:w-[280px]">
+                    <div className="rounded-lg border border-gray-200 bg-slate-50/50 p-3 space-y-3">
+                      <p className="text-sm font-semibold text-gray-800">BHUNEER / no-cap portal</p>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium text-gray-700">BHUNEER user ID</Label>
+                          <Input
+                            value={addNocForm.bhuneer_user_id}
+                            onChange={(e) => setAddNocForm((p) => ({ ...p, bhuneer_user_id: e.target.value }))}
+                            autoComplete="off"
+                            className="h-11 border border-gray-300"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium text-gray-700">Password</Label>
+                          <Input
+                            type="password"
+                            value={addNocForm.bhuneer_password}
+                            onChange={(e) => setAddNocForm((p) => ({ ...p, bhuneer_password: e.target.value }))}
+                            autoComplete="new-password"
+                            className="h-11 border border-gray-300"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium text-gray-700">No cap user ID</Label>
+                          <Input
+                            value={addNocForm.nocap_user_id}
+                            onChange={(e) =>
+                              setAddNocForm((p) => ({ ...p, nocap_user_id: e.target.value.toLowerCase() }))
+                            }
+                            autoComplete="off"
+                            placeholder="stored lowercase"
+                            className="h-11 border border-gray-300"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium text-gray-700">Password</Label>
+                          <Input
+                            type="password"
+                            value={addNocForm.nocap_password}
+                            onChange={(e) => setAddNocForm((p) => ({ ...p, nocap_password: e.target.value }))}
+                            autoComplete="new-password"
+                            className="h-11 border border-gray-300"
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-3">
                       <div className="space-y-2">
                         <Label className="text-sm font-medium text-gray-700">Project name</Label>
                         <Input value={addNocForm.project_name} onChange={(e) => setAddNocForm((p) => ({ ...p, project_name: e.target.value }))} className="h-11" />
@@ -1140,7 +2039,7 @@ const CGWFlowMetre = () => {
                         <Label className="text-sm font-medium text-gray-700">Project address</Label>
                         <Input value={addNocForm.project_address} onChange={(e) => setAddNocForm((p) => ({ ...p, project_address: e.target.value }))} className="h-11" />
                       </div>
-                      <div className="space-y-2 col-span-2">
+                      <div className="space-y-2">
                         <Label className="text-sm font-medium text-gray-700">Communication address</Label>
                         <Input value={addNocForm.communication_address} onChange={(e) => setAddNocForm((p) => ({ ...p, communication_address: e.target.value }))} className="h-11" />
                       </div>
@@ -1187,7 +2086,7 @@ const CGWFlowMetre = () => {
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-sm font-semibold text-gray-800 mb-3">Ground water abstraction permitted</p>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-3">
                         <div className="space-y-2">
                           <Label className="text-sm font-medium text-gray-700">M3 per day</Label>
                           <Input value={addNocForm.permitted_m3_per_day} onChange={(e) => setAddNocForm((p) => ({ ...p, permitted_m3_per_day: e.target.value }))} className="h-11" />
@@ -1200,7 +2099,7 @@ const CGWFlowMetre = () => {
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-sm font-semibold text-gray-800 mb-3">Detail of ground water abstraction / dewatering structure</p>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-3">
                         <div className="space-y-2">
                           <Label className="text-sm font-medium text-gray-700">Existing BW count</Label>
                           <Input value={addNocForm.existing_bw_count} onChange={(e) => setAddNocForm((p) => ({ ...p, existing_bw_count: e.target.value }))} className="h-11" />
@@ -1210,10 +2109,17 @@ const CGWFlowMetre = () => {
                           <Input value={addNocForm.total_proposed_bw_count} onChange={(e) => setAddNocForm((p) => ({ ...p, total_proposed_bw_count: e.target.value }))} className="h-11" />
                         </div>
                         <div className="space-y-2">
-                          <Label className="text-sm font-medium text-gray-700">Piezometer applicable or not</Label>
+                          <Label className="text-sm font-medium text-gray-700">Flowmeter applicable or not</Label>
                           <select
-                            value={addNocForm.piezometer_applicable}
-                            onChange={(e) => setAddNocForm((p) => ({ ...p, piezometer_applicable: e.target.value }))}
+                            value={addNocForm.flowmeter_applicable}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setAddNocForm((p) => ({
+                                ...p,
+                                flowmeter_applicable: v,
+                                flowmeter_count: v === 'yes' ? p.flowmeter_count : '',
+                              }));
+                            }}
                             className="w-full border border-gray-300 rounded-lg px-3 h-11"
                           >
                             <option value="">Select</option>
@@ -1221,6 +2127,39 @@ const CGWFlowMetre = () => {
                             <option value="no">No</option>
                           </select>
                         </div>
+                        {addNocForm.flowmeter_applicable === 'yes' && (
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium text-gray-700">Flowmeter count</Label>
+                            <Input value={addNocForm.flowmeter_count} onChange={(e) => setAddNocForm((p) => ({ ...p, flowmeter_count: e.target.value }))} className="h-11" />
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium text-gray-700">Piezometer applicable or not</Label>
+                          <select
+                            value={addNocForm.piezometer_applicable}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setAddNocForm((p) => ({
+                                ...p,
+                                piezometer_applicable: v,
+                                piezometer_count: v === 'yes' ? p.piezometer_count : '',
+                              }));
+                            }}
+                            className="w-full border border-gray-300 rounded-lg px-3 h-11"
+                          >
+                            <option value="">Select</option>
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                          </select>
+                        </div>
+                        {addNocForm.piezometer_applicable === 'yes' && (
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium text-gray-700">Piezometer count</Label>
+                            <Input value={addNocForm.piezometer_count} onChange={(e) => setAddNocForm((p) => ({ ...p, piezometer_count: e.target.value }))} className="h-11" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
                       </div>
                     </div>
                   </div>
@@ -1228,99 +2167,556 @@ const CGWFlowMetre = () => {
 
                 {addStep === 3 && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">Date of Commissioning</Label>
-                        <Input type="date" value={formData.date_of_commissioning} onChange={(e) => setFormData({ ...formData, date_of_commissioning: e.target.value })} className="h-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">Renewal Date</Label>
-                        <Input type="date" value={formData.renewal_date} onChange={(e) => setFormData({ ...formData, renewal_date: e.target.value })} className="h-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">User ID</Label>
-                        <Input value={formData.user_id} onChange={(e) => setFormData({ ...formData, user_id: e.target.value })} className="h-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">Password</Label>
-                        <Input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="h-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">Status</Label>
-                        <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} className="w-full border border-gray-300 rounded-lg px-3 h-11">
-                          <option value="Active">Active</option>
-                          <option value="Inactive">Inactive</option>
-                          <option value="Maintenance">Maintenance</option>
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">URL Link</Label>
-                        <Input type="url" value={formData.url_link} onChange={(e) => setFormData({ ...formData, url_link: e.target.value })} className="h-11" />
-                      </div>
-                    </div>
-
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <Label className="text-sm font-medium text-gray-700">Flow metre / Piezometer rows</Label>
-                          <p className="text-xs text-gray-500 mt-0.5">Add multiple equipment lines under same customer.</p>
+                          <Label className="text-sm font-medium text-gray-700">Flow metre lines</Label>
+                          <p className="text-xs text-gray-500 mt-0.5">One card per flow metre; add rows for multiple units.</p>
                         </div>
-                        <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-50" onClick={() => setEquipmentRows(prev => [...prev, { ...EMPTY_EQUIPMENT_ROW }])}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                          onClick={() => {
+                            setEquipmentRows((prev) => [...prev, { ...EMPTY_EQUIPMENT_ROW }]);
+                            setEquipmentFlowFiles((prev) => [...prev, EMPTY_EQUIPMENT_FLOW_FILES()]);
+                          }}
+                        >
                           <Plus className="h-4 w-4 mr-2" />
                           Add Row
                         </Button>
                       </div>
                       <div className="space-y-2">
-                        {equipmentRows.map((row, idx) => (
-                          <Card key={idx} className="p-4 border border-gray-200">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="grid grid-cols-2 gap-4 flex-1">
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium text-gray-700">Equipment Name</Label>
-                                  <Input value={row.equipment_name} onChange={(e) => setEquipmentRows(prev => prev.map((r, i) => i === idx ? ({ ...r, equipment_name: e.target.value }) : r))} className="border border-gray-300 h-11" />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium text-gray-700">Flowmeter/Piezometer Details</Label>
-                                  <Input value={row.flowmeter_details} onChange={(e) => setEquipmentRows(prev => prev.map((r, i) => i === idx ? ({ ...r, flowmeter_details: e.target.value }) : r))} className="border border-gray-300 h-11" />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium text-gray-700">Product Code</Label>
-                                  <Input value={row.product_code} onChange={(e) => setEquipmentRows(prev => prev.map((r, i) => i === idx ? ({ ...r, product_code: e.target.value }) : r))} className="border border-gray-300 h-11" />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium text-gray-700">Model No</Label>
-                                  <Input value={row.model_no} onChange={(e) => setEquipmentRows(prev => prev.map((r, i) => i === idx ? ({ ...r, model_no: e.target.value }) : r))} className="border border-gray-300 h-11" />
-                                </div>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-9 px-3 border-gray-200 text-red-600 hover:bg-red-50 shrink-0"
-                                disabled={equipmentRows.length === 1}
-                                onClick={() => setEquipmentRows(prev => prev.filter((_, i) => i !== idx))}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Remove
-                              </Button>
-                            </div>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
+                        {equipmentRows.map((row, idx) => {
+                          const patchRow = (patch) =>
+                            setEquipmentRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+                          const flowFiles = equipmentFlowFiles[idx] || {};
+                          const setFlowFile = (key, file) =>
+                            setEquipmentFlowFiles((prev) =>
+                              prev.map((b, i) => (i === idx ? { ...b, [key]: file || undefined } : b))
+                            );
+                          return (
+                            <Card key={idx} className="p-4 border border-gray-200">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0 space-y-4">
+                                  <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-3">
+                                    <p className="text-sm font-semibold text-gray-800">Flow metre details</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                      <div className="space-y-2">
+                                        <Label className="text-sm font-medium text-gray-700">Make</Label>
+                                        <Input
+                                          value={row.flow_meter_make}
+                                          onChange={(e) => patchRow({ flow_meter_make: e.target.value })}
+                                          placeholder="UPC"
+                                          className="border border-gray-300 h-11"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-sm font-medium text-gray-700">Size of flow metre</Label>
+                                        <Input
+                                          value={row.flow_meter_size}
+                                          onChange={(e) => patchRow({ flow_meter_size: e.target.value })}
+                                          className="border border-gray-300 h-11"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-sm font-medium text-gray-700">Serial number</Label>
+                                        <Input
+                                          value={row.flow_meter_serial}
+                                          onChange={(e) => patchRow({ flow_meter_serial: e.target.value })}
+                                          className="border border-gray-300 h-11"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2 border-t border-gray-200 pt-3">
+                                      <Label className="text-sm font-medium text-gray-700">
+                                        BW with flowmeter GEO tagging photos
+                                      </Label>
+                                      <Input
+                                        type="file"
+                                        multiple
+                                        accept="image/*,.jpg,.jpeg,.png,.webp,.gif"
+                                        onChange={(e) => {
+                                          const picked = e.target.files ? Array.from(e.target.files) : [];
+                                          e.target.value = '';
+                                          const imgs = picked.filter(
+                                            (f) => f.type.startsWith('image/') || /\.(jpe?g|png|gif|webp)$/i.test(f.name)
+                                          );
+                                          if (imgs.length < picked.length) {
+                                            toast.error('GEO tagging accepts image files only');
+                                          }
+                                          setEquipmentFlowFiles((prev) =>
+                                            prev.map((b, i) => (i === idx ? { ...b, bwGeoPhotos: imgs } : b))
+                                          );
+                                        }}
+                                        className="h-11 text-sm"
+                                      />
+                                      <LocalImagePreviews files={flowFiles.bwGeoPhotos} />
+                                      {(flowFiles.bwGeoPhotos || []).length > 0 ? (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-8 text-xs text-gray-600"
+                                          onClick={() =>
+                                            setEquipmentFlowFiles((prev) =>
+                                              prev.map((b, i) => (i === idx ? { ...b, bwGeoPhotos: [] } : b))
+                                            )
+                                          }
+                                        >
+                                          Clear GEO photos
+                                        </Button>
+                                      ) : (
+                                        <p className="text-xs text-gray-400">Multiple images; uploads after save (S3).</p>
+                                      )}
+                                    </div>
+                                  </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">Review</Label>
-                        <textarea value={formData.review} onChange={(e) => setFormData({ ...formData, review: e.target.value })} rows="2" className="w-full border border-gray-300 rounded-lg px-3 py-2" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium text-gray-700">Remarks</Label>
-                        <textarea value={formData.remarks} onChange={(e) => setFormData({ ...formData, remarks: e.target.value })} rows="2" className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+                                  <div className="rounded-lg border border-gray-200 p-3 space-y-3">
+                                    <p className="text-sm font-semibold text-gray-800">Calibration certificate</p>
+                                    <div className="space-y-2">
+                                      <Label className="text-sm font-medium text-gray-700">Certificate (file)</Label>
+                                      <Input
+                                        type="file"
+                                        accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
+                                        onChange={(e) => {
+                                          const f = e.target.files?.[0];
+                                          e.target.value = '';
+                                          setFlowFile('calibration_cert', f);
+                                        }}
+                                        className="h-11 text-sm"
+                                      />
+                                      {flowFiles.calibration_cert ? (
+                                        <p className="text-xs text-gray-600">Selected: {flowFiles.calibration_cert.name}</p>
+                                      ) : (
+                                        <p className="text-xs text-gray-400">Uploads after the row is saved (S3).</p>
+                                      )}
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                      <div className="space-y-2">
+                                        <Label className="text-sm font-medium text-gray-700">Valid from</Label>
+                                        <Input
+                                          type="date"
+                                          value={row.calibration_valid_from}
+                                          onChange={(e) => patchRow({ calibration_valid_from: e.target.value })}
+                                          className="h-11"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-sm font-medium text-gray-700">Valid to</Label>
+                                        <Input
+                                          type="date"
+                                          value={row.calibration_valid_to}
+                                          onChange={(e) => patchRow({ calibration_valid_to: e.target.value })}
+                                          className="h-11"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                                    <p className="text-sm font-semibold text-gray-800">Service report</p>
+                                    <Label className="text-sm font-medium text-gray-700">
+                                      Upload service report <span className="text-red-600">*</span>
+                                    </Label>
+                                    <Input
+                                      type="file"
+                                      accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        e.target.value = '';
+                                        setFlowFile('service_report', f);
+                                      }}
+                                      className="h-11 text-sm"
+                                    />
+                                    {flowFiles.service_report ? (
+                                      <p className="text-xs text-gray-600">Selected: {flowFiles.service_report.name}</p>
+                                    ) : (
+                                      <p className="text-xs text-gray-500">Required for every flow metre line included in this save.</p>
+                                    )}
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <Label className="text-sm font-medium text-gray-700">Applicable telemetry system?</Label>
+                                    <select
+                                      value={row.telemetry_applicable}
+                                      onChange={(e) => patchRow({ telemetry_applicable: e.target.value })}
+                                      className="w-full border border-gray-300 rounded-lg px-3 h-11"
+                                    >
+                                      <option value="">Select</option>
+                                      <option value="yes">Yes</option>
+                                      <option value="no">No</option>
+                                    </select>
+                                  </div>
+
+                                  {row.telemetry_applicable === 'yes' ? (
+                                    <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-4">
+                                      <p className="text-sm font-semibold text-gray-800">Telemetry system</p>
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry company</Label>
+                                          <select
+                                            value={row.telemetry_company}
+                                            onChange={(e) => patchRow({ telemetry_company: e.target.value })}
+                                            className="w-full border border-gray-300 rounded-lg px-3 h-11"
+                                          >
+                                            <option value="">Select</option>
+                                            <option value="frinso">FRINSO</option>
+                                            <option value="ubiqedge">UBIQEDGE</option>
+                                            <option value="other">Other</option>
+                                          </select>
+                                        </div>
+                                        {row.telemetry_company === 'other' ? (
+                                          <div className="space-y-2">
+                                            <Label className="text-sm font-medium text-gray-700">Company name (manual)</Label>
+                                            <Input
+                                              value={row.telemetry_company_other}
+                                              onChange={(e) => patchRow({ telemetry_company_other: e.target.value })}
+                                              className="h-11"
+                                            />
+                                          </div>
+                                        ) : null}
+                                        <div className="space-y-2 sm:col-span-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry communication via</Label>
+                                          <select
+                                            value={row.telemetry_communication_via}
+                                            onChange={(e) => patchRow({ telemetry_communication_via: e.target.value })}
+                                            className="w-full border border-gray-300 rounded-lg px-3 h-11 max-w-md"
+                                          >
+                                            <option value="">Select</option>
+                                            <option value="sim">SIM</option>
+                                            <option value="wifi">Wi-Fi</option>
+                                            <option value="ethernet">Ethernet</option>
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      {row.telemetry_communication_via === 'sim' ? (
+                                        <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
+                                          <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Telemetry SIM</p>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div className="space-y-2">
+                                              <Label className="text-sm font-medium text-gray-700">SIM provider</Label>
+                                              <select
+                                                value={row.telemetry_sim_provider}
+                                                onChange={(e) => patchRow({ telemetry_sim_provider: e.target.value })}
+                                                className="w-full border border-gray-300 rounded-lg px-3 h-11"
+                                              >
+                                                <option value="">Select</option>
+                                                <option value="airtel">Airtel</option>
+                                                <option value="jio">Jio</option>
+                                                <option value="bsnl">BSNL</option>
+                                                <option value="vodafone">Vodafone</option>
+                                                <option value="other">Other</option>
+                                              </select>
+                                            </div>
+                                            {row.telemetry_sim_provider === 'other' ? (
+                                              <div className="space-y-2">
+                                                <Label className="text-sm font-medium text-gray-700">Provider (manual)</Label>
+                                                <Input
+                                                  value={row.telemetry_sim_provider_other}
+                                                  onChange={(e) => patchRow({ telemetry_sim_provider_other: e.target.value })}
+                                                  className="h-11"
+                                                />
+                                              </div>
+                                            ) : null}
+                                            <div className="space-y-2 sm:col-span-2">
+                                              <Label className="text-sm font-medium text-gray-700">SIM number</Label>
+                                              <Input
+                                                value={row.telemetry_sim_number}
+                                                onChange={(e) => patchRow({ telemetry_sim_number: e.target.value })}
+                                                className="h-11"
+                                              />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label className="text-sm font-medium text-gray-700">SIM valid from</Label>
+                                              <Input
+                                                type="date"
+                                                value={row.telemetry_sim_valid_from}
+                                                onChange={(e) => patchRow({ telemetry_sim_valid_from: e.target.value })}
+                                                className="h-11"
+                                              />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label className="text-sm font-medium text-gray-700">SIM valid to</Label>
+                                              <Input
+                                                type="date"
+                                                value={row.telemetry_sim_valid_to}
+                                                onChange={(e) => patchRow({ telemetry_sim_valid_to: e.target.value })}
+                                                className="h-11"
+                                              />
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ) : null}
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry product code</Label>
+                                          <Input
+                                            value={row.telemetry_product_code}
+                                            onChange={(e) => patchRow({ telemetry_product_code: e.target.value })}
+                                            className="h-11"
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry serial number</Label>
+                                          <Input
+                                            value={row.telemetry_serial_number}
+                                            onChange={(e) => patchRow({ telemetry_serial_number: e.target.value })}
+                                            className="h-11"
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <div className="space-y-2 rounded-md border border-gray-200 bg-white p-3">
+                                        <Label className="text-sm font-medium text-gray-700">Telemetry device photos</Label>
+                                        <Input
+                                          type="file"
+                                          multiple
+                                          accept="image/*,.jpg,.jpeg,.png,.webp,.gif"
+                                          onChange={(e) => {
+                                            const picked = e.target.files ? Array.from(e.target.files) : [];
+                                            e.target.value = '';
+                                            const imgs = picked.filter(
+                                              (f) => f.type.startsWith('image/') || /\.(jpe?g|png|gif|webp)$/i.test(f.name)
+                                            );
+                                            if (imgs.length < picked.length) {
+                                              toast.error('Telemetry photos accept image files only');
+                                            }
+                                            setEquipmentFlowFiles((prev) =>
+                                              prev.map((b, i) => (i === idx ? { ...b, telemetryPhotoFiles: imgs } : b))
+                                            );
+                                          }}
+                                          className="h-11 text-sm"
+                                        />
+                                        <LocalImagePreviews files={flowFiles.telemetryPhotoFiles} />
+                                        {(flowFiles.telemetryPhotoFiles || []).length > 0 ? (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 text-xs text-gray-600"
+                                            onClick={() =>
+                                              setEquipmentFlowFiles((prev) =>
+                                                prev.map((b, i) => (i === idx ? { ...b, telemetryPhotoFiles: [] } : b))
+                                              )
+                                            }
+                                          >
+                                            Clear telemetry photos
+                                          </Button>
+                                        ) : (
+                                          <p className="text-xs text-gray-400">Multiple images; preview above; uploads after save (S3).</p>
+                                        )}
+                                      </div>
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="space-y-2 sm:col-span-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry portal URL</Label>
+                                          <Input
+                                            type="url"
+                                            value={row.telemetry_portal_url}
+                                            onChange={(e) => patchRow({ telemetry_portal_url: e.target.value })}
+                                            placeholder="https://…"
+                                            className="h-11"
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry username</Label>
+                                          <Input
+                                            value={row.telemetry_username}
+                                            onChange={(e) => patchRow({ telemetry_username: e.target.value })}
+                                            className="h-11"
+                                            autoComplete="off"
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry password</Label>
+                                          <Input
+                                            type="password"
+                                            value={row.telemetry_password}
+                                            onChange={(e) => patchRow({ telemetry_password: e.target.value })}
+                                            className="h-11"
+                                            autoComplete="new-password"
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry valid from</Label>
+                                          <Input
+                                            type="date"
+                                            value={row.telemetry_valid_from}
+                                            onChange={(e) => patchRow({ telemetry_valid_from: e.target.value })}
+                                            className="h-11"
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label className="text-sm font-medium text-gray-700">Telemetry valid to</Label>
+                                          <Input
+                                            type="date"
+                                            value={row.telemetry_valid_to}
+                                            onChange={(e) => patchRow({ telemetry_valid_to: e.target.value })}
+                                            className="h-11"
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <Label className="text-sm font-medium text-gray-700">Telemetry uploaded in previous year?</Label>
+                                        <select
+                                          value={row.telemetry_uploaded_previous_year}
+                                          onChange={(e) => patchRow({ telemetry_uploaded_previous_year: e.target.value })}
+                                          className="w-full border border-gray-300 rounded-lg px-3 h-11 max-w-md"
+                                        >
+                                          <option value="">Select</option>
+                                          <option value="yes">Yes</option>
+                                          <option value="no">No</option>
+                                        </select>
+                                      </div>
+
+                                      {row.telemetry_uploaded_previous_year === 'yes' ? (
+                                        <div className="rounded-md border border-gray-200 bg-gray-50/80 p-3 space-y-3">
+                                          <div className="space-y-2">
+                                            <Label className="text-sm font-medium text-gray-700">Prior telemetry serial number</Label>
+                                            <select
+                                              value={row.telemetry_previous_serial_pick}
+                                              onChange={(e) => patchRow({ telemetry_previous_serial_pick: e.target.value })}
+                                              className="w-full border border-gray-300 rounded-lg px-3 h-11"
+                                            >
+                                              <option value="">Select serial</option>
+                                              {telemetrySerialOptions.map((s) => (
+                                                <option key={s} value={s}>
+                                                  {s}
+                                                </option>
+                                              ))}
+                                              <option value="__manual__">Other (enter manually)</option>
+                                            </select>
+                                          </div>
+                                          {row.telemetry_previous_serial_pick === '__manual__' ? (
+                                            <div className="space-y-2">
+                                              <Label className="text-sm font-medium text-gray-700">Serial number (manual)</Label>
+                                              <Input
+                                                value={row.telemetry_previous_serial_free}
+                                                onChange={(e) => patchRow({ telemetry_previous_serial_free: e.target.value })}
+                                                className="h-11"
+                                              />
+                                            </div>
+                                          ) : null}
+
+                                          <div className="space-y-2">
+                                            <Label className="text-sm font-medium text-gray-700">Old telemetry data available?</Label>
+                                            <select
+                                              value={row.telemetry_previous_data_available}
+                                              onChange={(e) => patchRow({ telemetry_previous_data_available: e.target.value })}
+                                              className="w-full border border-gray-300 rounded-lg px-3 h-11 max-w-md"
+                                            >
+                                              <option value="">Select</option>
+                                              <option value="yes">Yes</option>
+                                              <option value="no">No</option>
+                                            </select>
+                                          </div>
+
+                                          {row.telemetry_previous_data_available === 'yes' ? (
+                                            <div className="space-y-3 pt-1 border-t border-gray-200">
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div className="space-y-2">
+                                                  <Label className="text-sm font-medium text-gray-700">Old data from</Label>
+                                                  <Input
+                                                    type="date"
+                                                    value={row.telemetry_previous_data_from}
+                                                    onChange={(e) => patchRow({ telemetry_previous_data_from: e.target.value })}
+                                                    className="h-11"
+                                                  />
+                                                </div>
+                                                <div className="space-y-2">
+                                                  <Label className="text-sm font-medium text-gray-700">Old data to</Label>
+                                                  <Input
+                                                    type="date"
+                                                    value={row.telemetry_previous_data_to}
+                                                    onChange={(e) => patchRow({ telemetry_previous_data_to: e.target.value })}
+                                                    className="h-11"
+                                                  />
+                                                </div>
+                                              </div>
+                                              <div className="space-y-2">
+                                                <Label className="text-sm font-medium text-gray-700">Upload Excel data</Label>
+                                                <Input
+                                                  type="file"
+                                                  accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                                                  onChange={(e) => {
+                                                    const f = e.target.files?.[0];
+                                                    e.target.value = '';
+                                                    setFlowFile('telemetry_excel', f);
+                                                  }}
+                                                  className="h-11 text-sm"
+                                                />
+                                                {flowFiles.telemetry_excel ? (
+                                                  <p className="text-xs text-gray-600">Selected: {flowFiles.telemetry_excel.name}</p>
+                                                ) : null}
+                                              </div>
+                                              <div className="space-y-2">
+                                                <Label className="text-sm font-medium text-gray-700">
+                                                  Prior-year telemetry service report
+                                                </Label>
+                                                <Input
+                                                  type="file"
+                                                  accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
+                                                  onChange={(e) => {
+                                                    const f = e.target.files?.[0];
+                                                    e.target.value = '';
+                                                    setFlowFile('telemetry_service', f);
+                                                  }}
+                                                  className="h-11 text-sm"
+                                                />
+                                                {flowFiles.telemetry_service ? (
+                                                  <p className="text-xs text-gray-600">Selected: {flowFiles.telemetry_service.name}</p>
+                                                ) : (
+                                                  <p className="text-xs text-gray-400">Optional; uploads as prior-year telemetry report.</p>
+                                                )}
+                                              </div>
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-9 px-3 border-gray-200 text-red-600 hover:bg-red-50 shrink-0"
+                                  disabled={equipmentRows.length === 1}
+                                  onClick={() => {
+                                    setEquipmentRows((prev) => prev.filter((_, i) => i !== idx));
+                                    setEquipmentFlowFiles((prev) => prev.filter((_, i) => i !== idx));
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Remove
+                                </Button>
+                              </div>
+                            </Card>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
                 )}
+
+                {addStep === 4 && needsPiezometerWizardStep ? (
+                  <div className="rounded-lg border border-gray-200 bg-slate-50/40 p-4">
+                    <PiezometerAddWizardStep
+                      piezometerRows={piezometerRows}
+                      setPiezometerRows={setPiezometerRows}
+                      piezometerFiles={piezometerFiles}
+                      setPiezometerFiles={setPiezometerFiles}
+                      telemetrySerialOptions={telemetrySerialOptions}
+                      countLabel={`${piezometerWizardCount} piezometer${piezometerWizardCount !== 1 ? 's' : ''} (NOC count ${String(addNocForm.piezometer_count || '').trim() || '—'})`}
+                      onSubmit={handleSubmit}
+                      submitting={addWizardSubmitting}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="flex justify-between gap-3 pt-2">
                   <div>
@@ -1334,13 +2730,18 @@ const CGWFlowMetre = () => {
                     <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} className="border-gray-300 text-gray-700 hover:bg-gray-50">
                       Cancel
                     </Button>
-                    {addStep < 3 ? (
+                    {addStep < addWizardFinalStep ? (
                       <Button type="button" className="bg-blue-600 text-white hover:bg-blue-700" onClick={goAddNextStep}>
                         Next
                       </Button>
-                    ) : (
-                      <Button type="submit" className="bg-blue-600 text-white hover:bg-blue-700">
-                        Add Item
+                    ) : addStep === 4 && needsPiezometerWizardStep ? null : (
+                      <Button
+                        type="button"
+                        disabled={addWizardSubmitting}
+                        className="bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+                        onClick={handleSubmit}
+                      >
+                        {addWizardSubmitting ? 'Saving…' : 'Add Item'}
                       </Button>
                     )}
                   </div>
@@ -1350,53 +2751,22 @@ const CGWFlowMetre = () => {
           </Dialog>
           </div>
         )}
-        {showColumnFilter && (
-          <Card className="absolute right-0 top-11 z-30 w-80 p-3 border border-gray-200 shadow-lg bg-white">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-medium text-gray-800">Filter specific column</p>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 w-7 p-0 text-gray-600"
-                onClick={() => setShowColumnFilter(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="space-y-2">
-              <select
-                value={selectedFilterField}
-                onChange={(e) => setSelectedFilterField(e.target.value)}
-                className="w-full h-9 rounded border border-gray-300 px-2 text-sm bg-white"
-              >
-                {FILTER_FIELDS.map((field) => (
-                  <option key={field} value={field}>
-                    {FILTER_LABELS[field]}
-                  </option>
-                ))}
-              </select>
-              <Input
-                value={selectedFilterValue}
-                onChange={(e) => setSelectedFilterValue(e.target.value)}
-                placeholder="Type value to filter..."
-                className="h-9 text-sm"
-              />
-              <div className="flex justify-end gap-2 pt-1">
-                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={handleClearColumnFilter}>
-                  Clear
-                </Button>
-                <Button type="button" size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={handleApplyColumnFilter}>
-                  Apply
-                </Button>
-              </div>
-            </div>
-          </Card>
-        )}
       </div>
 
+      <Card className="p-4 sm:p-5 rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+          <Input
+            placeholder="Search across all columns…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 border border-gray-300 h-10 rounded-lg text-sm text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+          />
+        </div>
+      </Card>
+
       {canManage && SHOW_CGW_DIGEST_EMAIL_SECTION && (
-        <Card className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <Card className="rounded-lg border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1 min-w-0 flex-1">
               <h3 className="text-sm font-semibold text-gray-900">Daily past-due renewal email</h3>
@@ -1453,59 +2823,53 @@ const CGWFlowMetre = () => {
         </Card>
       )}
 
-      {/* Excel-like Grid */}
+      {/* Inventory grid */}
       {filteredItems.length > 0 ? (
         <Card className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="overflow-auto table-scroll max-h-[calc(100vh-155px)] scrollbar-thin" style={{ scrollbarWidth: 'auto' }}>
-            <table className="w-full text-xs min-w-[2300px]">
+          <div className="overflow-auto table-scroll max-h-[calc(100vh-220px)] scrollbar-thin" style={{ scrollbarWidth: 'auto' }}>
+            <table className="w-full text-sm min-w-[2300px]">
               <thead>
-                <tr className="border-b border-gray-200 bg-gray-100">
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">CUSTOMER ID</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">CUSTOMER NAME</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap min-w-[108px] align-top">
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th colSpan="5" className="text-center py-2.5 px-3 font-semibold text-sky-900 bg-sky-100/80 border-r border-sky-200">Customer & NOC</th>
+                  <th colSpan="5" className="text-center py-2.5 px-3 font-semibold text-indigo-900 bg-indigo-100/80 border-r border-indigo-200">Flow Metre Details</th>
+                  <th colSpan="3" className="text-center py-2.5 px-3 font-semibold text-violet-900 bg-violet-100/80 border-r border-violet-200">Telemetry & Piezometer</th>
+                  <th colSpan="4" className="text-center py-2.5 px-3 font-semibold text-emerald-900 bg-emerald-100/80 border-r border-emerald-200">Contact</th>
+                  <th colSpan="1" className="text-center py-2.5 px-3 font-semibold text-amber-900 bg-amber-100/80">Lifecycle</th>
+                  {canManage && (
+                    <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-gray-700 whitespace-nowrap border-l border-gray-200">ACTIONS</th>
+                  )}
+                </tr>
+                <tr className="border-b border-gray-200 bg-gray-50/90">
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">CUSTOMER NAME</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap min-w-[108px] align-top">
                     <span className="block leading-snug">NOC</span>
                     <span className="mt-0.5 block text-[10px] font-normal text-gray-500 leading-tight">Per equipment row</span>
                   </th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap min-w-[120px] align-top">
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap min-w-[120px] align-top">
                     <span className="block leading-snug">CGWA DATA</span>
                     <span className="mt-0.5 block text-[10px] font-normal text-gray-500 leading-tight">S3 · per row</span>
                   </th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">LOCATION</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">CONTACT PERSON</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">NAME OF EQUIPMENT</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">FLOWMETER/PIEZOMETER DETAILS</th>
-                  <th colSpan="2" className="text-center py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">TELEMETRIC SYSTEM</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">SYSTEM MOBILE NUMBER</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">PERSON MOBILE NUMBER</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">EMAIL ID</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">DATE OF COMMISSONING</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">URL LINK</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">USER ID</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">PASSWORD</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">STATUS</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 align-top min-w-[132px] whitespace-normal">
-                    <span className="block leading-snug">RENEWAL DATE WILL BE</span>
-                    <span className="mt-1 block text-[10px] font-normal text-gray-500 leading-tight">
-                      <span className="text-red-600 font-semibold">Red</span> = past due ·{' '}
-                      <span className="text-amber-700 font-semibold">Amber</span> = ≤30 days
-                    </span>
-                  </th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 align-top min-w-[120px] whitespace-normal">
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">LOCATION</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">CONTACT PERSON</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">FLOW METER MAKE</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">FLOW METER SIZE</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">FLOW METER SERIAL</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">CALIBRATION FROM</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">CALIBRATION TO</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-violet-900 bg-violet-50 whitespace-nowrap">TELEMETRY COMPANY</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-violet-900 bg-violet-50 whitespace-nowrap">TELEMETRY SERIAL</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-violet-900 bg-violet-50 whitespace-nowrap">PIEZOMETER DETAILS (NOC | ENTERED)</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-emerald-900 bg-emerald-50 whitespace-nowrap">SYSTEM MOBILE NUMBER</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-emerald-900 bg-emerald-50 whitespace-nowrap">PERSON MOBILE NUMBER</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-emerald-900 bg-emerald-50 whitespace-nowrap">EMAIL ID</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-emerald-900 bg-emerald-50 whitespace-nowrap">DATE OF COMMISSONING</th>
+                  <th rowSpan="1" className="text-left py-3 px-4 font-semibold text-amber-900 bg-amber-50 align-top min-w-[120px] whitespace-normal">
                     <span className="block leading-snug">NOC VALID UPTO</span>
                     <span className="mt-1 block text-[10px] font-normal text-gray-500 leading-tight">
                       <span className="text-red-600 font-semibold">Red</span> = expired ·{' '}
                       <span className="text-amber-700 font-semibold">Amber</span> = ≤30 days
                     </span>
                   </th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">REVIEW</th>
-                  <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">REMARKS</th>
-                  {canManage && (
-                    <th rowSpan="2" className="text-left py-2 px-2 font-semibold text-gray-700 whitespace-nowrap">ACTIONS</th>
-                  )}
-                </tr>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="text-left py-1.5 px-2 font-semibold text-gray-700 whitespace-nowrap">PRODUCT CODE</th>
-                  <th className="text-left py-1.5 px-2 font-semibold text-gray-700 whitespace-nowrap">MODEL NO</th>
                 </tr>
               </thead>
               <tbody>
@@ -1527,22 +2891,15 @@ const CGWFlowMetre = () => {
 
                   return group.rows.map((item, rowIndex) => (
                     <tr key={item.id} className={`${rowRenewalClass} align-top`}>
-                      <td className="py-1.5 px-2 text-gray-900 whitespace-nowrap font-mono">
-                        {baseCustomerCode === '—'
-                          ? '—'
-                          : rowIndex === 0
-                            ? baseCustomerCode
-                            : `${baseCustomerCode}-${rowIndex}`}
-                      </td>
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 font-medium text-gray-900 whitespace-nowrap">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 font-medium text-gray-900 whitespace-nowrap bg-sky-50/40">
                           {groupEditActive ? (
                             <Input value={inlineEditData.customer_name} onChange={(e) => handleInlineChange('customer_name', e.target.value)} className="h-7 text-[11px] px-2" />
                           ) : (groupAnchor.customer_name || '—')}
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 align-top min-w-[108px] border-r border-gray-100 bg-white">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 align-top min-w-[108px] border-r border-sky-100 bg-sky-50/40">
                           <div className="space-y-2">
                             {group.rows.map((inv) => (
                               <div key={inv.id} className="rounded border border-gray-200 bg-gray-50/80 p-1.5">
@@ -1594,20 +2951,34 @@ const CGWFlowMetre = () => {
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 align-top min-w-[120px] border-r border-gray-100 bg-white">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 align-top min-w-[120px] border-r border-sky-100 bg-sky-50/40">
                           <div className="space-y-2">
                             {group.rows.map((inv) => (
                               <div key={inv.id} className="rounded border border-gray-200 bg-gray-50/80 p-1.5">
                                 <p className="text-[9px] font-mono text-gray-500 mb-1 truncate">{inv.inventory_id}</p>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 px-1 text-[9px] border-gray-200 w-full"
-                                  onClick={() => openMediaDialog(inv, 'flow_meter')}
-                                >
-                                  Files (S3)
-                                </Button>
+                                <div className="flex flex-col gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-1 text-[9px] border-gray-200 w-full"
+                                    onClick={() => openMediaDialog(inv, 'flow_meter')}
+                                  >
+                                    Files (S3)
+                                  </Button>
+                                  {cgwFirstAttachmentCategory(inv) ? (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-1 text-[9px] text-blue-700"
+                                      onClick={() => openMediaDialog(inv, cgwFirstAttachmentCategory(inv))}
+                                    >
+                                      <Eye className="h-3 w-3 mr-0.5" />
+                                      Preview
+                                    </Button>
+                                  ) : null}
+                                </div>
                                 <div className="text-[8px] text-gray-500 mt-1 leading-tight space-y-0.5">
                                   {CGW_MEDIA_KEYS.map((k) => {
                                     const n = (inv.cgw_attachments?.[k] || []).length;
@@ -1625,37 +2996,49 @@ const CGWFlowMetre = () => {
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 whitespace-nowrap bg-sky-50/40">
                           {groupEditActive ? <Input value={inlineEditData.location} onChange={(e) => handleInlineChange('location', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.location || '—')}
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 whitespace-nowrap bg-sky-50/40">
                           {groupEditActive ? <Input value={inlineEditData.contact_person} onChange={(e) => handleInlineChange('contact_person', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.contact_person || '—')}
                         </td>
                       )}
 
                       {/* equipment-specific columns */}
-                      <td className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
-                        {inlineEditId === item.id ? <Input value={inlineEditData.equipment_name} onChange={(e) => handleInlineChange('equipment_name', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.equipment_name || '—')}
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap bg-indigo-50/35">
+                        {inlineEditId === item.id ? <Input value={inlineEditData.flow_meter_make} onChange={(e) => handleInlineChange('flow_meter_make', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.flow_meter_make || '—')}
                       </td>
-                      <td className="py-1.5 px-2 text-gray-600 min-w-[160px]">
-                        {inlineEditId === item.id ? <Input value={inlineEditData.flowmeter_details} onChange={(e) => handleInlineChange('flowmeter_details', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.flowmeter_details || '—')}
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap bg-indigo-50/35">
+                        {inlineEditId === item.id ? <Input value={inlineEditData.flow_meter_size} onChange={(e) => handleInlineChange('flow_meter_size', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.flow_meter_size || '—')}
                       </td>
-                      <td className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
-                        {inlineEditId === item.id ? <Input value={inlineEditData.product_code} onChange={(e) => handleInlineChange('product_code', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.product_code || '—')}
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap font-mono bg-indigo-50/35">
+                        {inlineEditId === item.id ? <Input value={inlineEditData.flow_meter_serial} onChange={(e) => handleInlineChange('flow_meter_serial', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.flow_meter_serial || '—')}
                       </td>
-                      <td className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
-                        {inlineEditId === item.id ? <Input value={inlineEditData.model_no} onChange={(e) => handleInlineChange('model_no', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.model_no || '—')}
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap bg-indigo-50/35">
+                        {inlineEditId === item.id ? <Input type="date" value={inlineEditData.calibration_valid_from} onChange={(e) => handleInlineChange('calibration_valid_from', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.calibration_valid_from || '—')}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap bg-indigo-50/35">
+                        {inlineEditId === item.id ? <Input type="date" value={inlineEditData.calibration_valid_to} onChange={(e) => handleInlineChange('calibration_valid_to', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.calibration_valid_to || '—')}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap bg-violet-50/35">
+                        {inlineEditId === item.id ? <Input value={inlineEditData.telemetry_company} onChange={(e) => handleInlineChange('telemetry_company', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.telemetry_company || '—')}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600 whitespace-nowrap font-mono bg-violet-50/35">
+                        {inlineEditId === item.id ? <Input value={inlineEditData.telemetry_serial_number} onChange={(e) => handleInlineChange('telemetry_serial_number', e.target.value)} className="h-7 text-[11px] px-2" /> : (item.telemetry_serial_number || '—')}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600 min-w-[220px] bg-violet-50/35">
+                        {piezometerSummaryCellText(item)}
                       </td>
 
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 whitespace-nowrap bg-emerald-50/35">
                           {groupEditActive ? <Input value={inlineEditData.system_mobile_number} onChange={(e) => handleInlineChange('system_mobile_number', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.system_mobile_number || '—')}
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 whitespace-nowrap bg-emerald-50/35">
                           {groupEditActive ? (
                             <Input value={inlineEditData.person_mobile_number} onChange={(e) => handleInlineChange('person_mobile_number', e.target.value)} className="h-7 text-[11px] px-2" />
                           ) : groupAnchor.person_mobile_number ? (
@@ -1667,7 +3050,7 @@ const CGWFlowMetre = () => {
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 min-w-[180px]">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 min-w-[180px] bg-emerald-50/35">
                           {groupEditActive ? (
                             <Input value={inlineEditData.email_id} onChange={(e) => handleInlineChange('email_id', e.target.value)} className="h-7 text-[11px] px-2" />
                           ) : groupAnchor.email_id ? (
@@ -1679,76 +3062,18 @@ const CGWFlowMetre = () => {
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 whitespace-nowrap bg-emerald-50/35">
                           {groupEditActive ? <Input type="date" value={inlineEditData.date_of_commissioning} onChange={(e) => handleInlineChange('date_of_commissioning', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.date_of_commissioning || '—')}
                         </td>
                       )}
                       {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-blue-700 min-w-[140px] break-all">
-                          {groupEditActive ? <Input value={inlineEditData.url_link} onChange={(e) => handleInlineChange('url_link', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.url_link || '—')}
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
-                          {groupEditActive ? <Input value={inlineEditData.user_id} onChange={(e) => handleInlineChange('user_id', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.user_id || '—')}
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 whitespace-nowrap">
-                          {groupEditActive ? <Input value={inlineEditData.password} onChange={(e) => handleInlineChange('password', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.password || '—')}
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2">
-                          {groupEditActive ? (
-                            <select
-                              value={inlineEditData.status}
-                              onChange={(e) => handleInlineChange('status', e.target.value)}
-                              className="h-7 text-[11px] px-2 border border-gray-300 rounded w-full"
-                            >
-                              <option value="Active">Active</option>
-                              <option value="Inactive">Inactive</option>
-                              <option value="Maintenance">Maintenance</option>
-                            </select>
-                          ) : (
-                            <span className={`inline-flex px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap ${
-                              groupAnchor.status === 'Active' ? 'bg-green-50 text-green-700' :
-                              groupAnchor.status === 'Maintenance' ? 'bg-yellow-50 text-yellow-700' :
-                              'bg-gray-100 text-gray-600'
-                            }`}>
-                              {groupAnchor.status || '—'}
-                            </span>
-                          )}
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 whitespace-nowrap align-top">
-                          <RenewalDateCell
-                            groupEditActive={groupEditActive}
-                            inlineEditData={inlineEditData}
-                            groupAnchor={groupAnchor}
-                            onChange={handleInlineChange}
-                          />
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 align-top border-l border-gray-100 bg-white">
+                        <td rowSpan={group.rows.length} className="py-3 px-4 align-top border-l border-amber-100 bg-amber-50/35">
                           <NocValidUptoColumnCell groupRows={group.rows} />
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 min-w-[160px]">
-                          {groupEditActive ? <Input value={inlineEditData.review} onChange={(e) => handleInlineChange('review', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.review || '—')}
-                        </td>
-                      )}
-                      {rowIndex === 0 && (
-                        <td rowSpan={group.rows.length} className="py-1.5 px-2 text-gray-600 min-w-[160px]">
-                          {groupEditActive ? <Input value={inlineEditData.remarks} onChange={(e) => handleInlineChange('remarks', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.remarks || '—')}
                         </td>
                       )}
 
                       {canManage && (
-                        <td className="py-1.5 px-2">
+                        <td className="py-3 px-4">
                           <div className="flex gap-1.5">
                             {inlineEditId === item.id ? (
                               <>
@@ -1800,17 +3125,17 @@ const CGWFlowMetre = () => {
               </tbody>
             </table>
           </div>
-          <div className="border-t border-gray-200 bg-white px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+          <div className="border-t border-gray-200 bg-gray-50/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm">
             <div className="text-gray-600">
               Showing customer groups <span className="font-medium text-gray-900">{totalGroups === 0 ? 0 : pageStartIndex + 1}</span> to{' '}
               <span className="font-medium text-gray-900">{Math.min(pageStartIndex + pageSize, totalGroups)}</span> of{' '}
               <span className="font-medium text-gray-900">{totalGroups}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <select
                 value={pageSize}
                 onChange={(e) => setPageSize(Number(e.target.value))}
-                className="h-8 rounded border border-gray-300 px-2 text-xs bg-white"
+                className="h-10 rounded-lg border border-gray-300 px-2 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
               >
                 {PAGE_SIZE_OPTIONS.map((size) => (
                   <option key={size} value={size}>{size} / page</option>
@@ -1820,20 +3145,20 @@ const CGWFlowMetre = () => {
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-8 px-2 text-xs"
+                className="h-9 px-3 text-sm border-gray-300 text-gray-700 hover:bg-gray-50"
                 disabled={safeCurrentPage <= 1}
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               >
                 Prev
               </Button>
-              <span className="text-gray-700 min-w-[84px] text-center">
+              <span className="text-gray-700 min-w-[88px] text-center text-sm">
                 Page {safeCurrentPage} / {totalPages}
               </span>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-8 px-2 text-xs"
+                className="h-9 px-3 text-sm border-gray-300 text-gray-700 hover:bg-gray-50"
                 disabled={safeCurrentPage >= totalPages}
                 onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               >
@@ -1856,8 +3181,8 @@ const CGWFlowMetre = () => {
       >
         <DialogContent
           className={cn(
-            'flex flex-col gap-0 p-0 overflow-hidden border-0 bg-white max-w-[96vw] w-[96vw]',
-            'max-h-[92vh] h-[92vh] rounded-lg shadow-xl',
+            'flex flex-col gap-0 p-0 overflow-hidden border-0 bg-white max-w-[min(1800px,99vw)] w-[min(1800px,99vw)]',
+            'max-h-[min(96vh,100dvh)] h-[min(96vh,100dvh)] rounded-lg shadow-xl',
             'left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%]'
           )}
         >
@@ -1872,7 +3197,7 @@ const CGWFlowMetre = () => {
             </DialogHeader>
           </div>
           <div className="flex flex-1 min-h-0 flex-col lg:flex-row gap-0 overflow-hidden">
-            <div className="relative flex-1 min-h-[40vh] lg:min-h-0 bg-neutral-900 border-b lg:border-b-0 lg:border-r border-gray-200">
+            <div className="relative min-h-[52vh] flex-1 min-w-0 basis-0 bg-neutral-900 border-b lg:min-h-0 lg:border-b-0 lg:border-r lg:border-gray-200">
               {(() => {
                 const rawUrl = nocTargetItem?.noc_document_url;
                 const fullHref = rawUrl ? nocDocHref(rawUrl) : '';
@@ -1919,7 +3244,53 @@ const CGWFlowMetre = () => {
                 );
               })()}
             </div>
-            <div className="w-full lg:w-[380px] shrink-0 overflow-y-auto p-4 space-y-3 bg-white">
+            <div className="w-full shrink-0 space-y-2 overflow-y-auto border-t border-gray-200 bg-white p-3 lg:w-[min(280px,26vw)] lg:max-w-[280px] lg:border-l lg:border-t-0 lg:border-gray-200">
+              <div className="rounded-md border border-gray-200 bg-gray-50/70 p-3 space-y-2">
+                <p className="text-xs font-semibold text-gray-800">BHUNEER / no-cap portal</p>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">BHUNEER user ID</Label>
+                  <Input
+                    value={nocForm.bhuneer_user_id}
+                    onChange={(e) => setNocForm((p) => ({ ...p, bhuneer_user_id: e.target.value }))}
+                    disabled={nocReadOnly || !nocSideFieldsEditable}
+                    autoComplete="off"
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">Password</Label>
+                  <Input
+                    type="password"
+                    value={nocForm.bhuneer_password}
+                    onChange={(e) => setNocForm((p) => ({ ...p, bhuneer_password: e.target.value }))}
+                    disabled={nocReadOnly || !nocSideFieldsEditable}
+                    autoComplete="new-password"
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">No cap user ID</Label>
+                  <Input
+                    value={nocForm.nocap_user_id}
+                    onChange={(e) => setNocForm((p) => ({ ...p, nocap_user_id: e.target.value.toLowerCase() }))}
+                    disabled={nocReadOnly || !nocSideFieldsEditable}
+                    autoComplete="off"
+                    placeholder="stored lowercase"
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">Password</Label>
+                  <Input
+                    type="password"
+                    value={nocForm.nocap_password}
+                    onChange={(e) => setNocForm((p) => ({ ...p, nocap_password: e.target.value }))}
+                    disabled={nocReadOnly || !nocSideFieldsEditable}
+                    autoComplete="new-password"
+                    className="h-9 text-sm"
+                  />
+                </div>
+              </div>
               {canManage && !nocSideFieldsEditable && (
                 <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2">
                   <p className="text-[11px] text-amber-950 mb-2">
@@ -1977,6 +3348,151 @@ const CGWFlowMetre = () => {
                   disabled={nocReadOnly || !nocSideFieldsEditable}
                   className="h-9 text-sm"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Project address</Label>
+                <Input
+                  value={nocForm.project_address}
+                  onChange={(e) => setNocForm((p) => ({ ...p, project_address: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Communication address</Label>
+                <Input
+                  value={nocForm.communication_address}
+                  onChange={(e) => setNocForm((p) => ({ ...p, communication_address: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Project status</Label>
+                <select
+                  value={nocForm.project_status}
+                  onChange={(e) => setNocForm((p) => ({ ...p, project_status: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="w-full border border-gray-300 rounded-md px-2 h-9 text-sm"
+                >
+                  <option value="">—</option>
+                  <option value="existing_ground_water">Existing ground water</option>
+                  <option value="new_ground_water">New ground water</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">NOC type</Label>
+                <select
+                  value={nocForm.noc_type}
+                  onChange={(e) => setNocForm((p) => ({ ...p, noc_type: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="w-full border border-gray-300 rounded-md px-2 h-9 text-sm"
+                >
+                  <option value="">—</option>
+                  <option value="new">New</option>
+                  <option value="renewal">Renewal</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">M3 per day</Label>
+                <Input
+                  value={nocForm.permitted_m3_per_day}
+                  onChange={(e) => setNocForm((p) => ({ ...p, permitted_m3_per_day: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">M3 per year</Label>
+                <Input
+                  value={nocForm.permitted_m3_per_year}
+                  onChange={(e) => setNocForm((p) => ({ ...p, permitted_m3_per_year: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Existing BW count</Label>
+                <Input
+                  value={nocForm.existing_bw_count}
+                  onChange={(e) => setNocForm((p) => ({ ...p, existing_bw_count: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700">Total proposed BW count</Label>
+                <Input
+                  value={nocForm.total_proposed_bw_count}
+                  onChange={(e) => setNocForm((p) => ({ ...p, total_proposed_bw_count: e.target.value }))}
+                  disabled={nocReadOnly || !nocSideFieldsEditable}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="rounded-md border border-gray-100 p-2 space-y-2">
+                <p className="text-[11px] font-semibold text-gray-700">Dewatering / structure</p>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">Flowmeter applicable</Label>
+                  <select
+                    value={nocForm.flowmeter_applicable}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setNocForm((p) => ({
+                        ...p,
+                        flowmeter_applicable: v,
+                        flowmeter_count: v === 'yes' ? p.flowmeter_count : '',
+                      }));
+                    }}
+                    disabled={nocReadOnly || !nocSideFieldsEditable}
+                    className="w-full border border-gray-300 rounded-md px-2 h-9 text-sm"
+                  >
+                    <option value="">—</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+                {nocForm.flowmeter_applicable === 'yes' && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium text-gray-700">Flowmeter count</Label>
+                    <Input
+                      value={nocForm.flowmeter_count}
+                      onChange={(e) => setNocForm((p) => ({ ...p, flowmeter_count: e.target.value }))}
+                      disabled={nocReadOnly || !nocSideFieldsEditable}
+                      className="h-9 text-sm"
+                    />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-gray-700">Piezometer applicable</Label>
+                  <select
+                    value={nocForm.piezometer_applicable}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setNocForm((p) => ({
+                        ...p,
+                        piezometer_applicable: v,
+                        piezometer_count: v === 'yes' ? p.piezometer_count : '',
+                      }));
+                    }}
+                    disabled={nocReadOnly || !nocSideFieldsEditable}
+                    className="w-full border border-gray-300 rounded-md px-2 h-9 text-sm"
+                  >
+                    <option value="">—</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+                {nocForm.piezometer_applicable === 'yes' && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium text-gray-700">Piezometer count</Label>
+                    <Input
+                      value={nocForm.piezometer_count}
+                      onChange={(e) => setNocForm((p) => ({ ...p, piezometer_count: e.target.value }))}
+                      disabled={nocReadOnly || !nocSideFieldsEditable}
+                      className="h-9 text-sm"
+                    />
+                  </div>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-gray-700">Valid from</Label>
