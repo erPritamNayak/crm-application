@@ -734,6 +734,8 @@ class CGWFlowMetreModel(Base):
     noc_nocap_password = Column(String(255), nullable=True)
     # JSON: {"flow_meter":[{id,file_name,url}], "telemetry":[...], ...}
     cgw_attachments_json = Column(Text, nullable=True)
+    created_by_name = Column(String(255), nullable=True)
+    last_modified_by_name = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -1353,6 +1355,24 @@ def migrate_cgw_flow_metres_telemetry_portal_columns():
 
 
 migrate_cgw_flow_metres_telemetry_portal_columns()
+
+
+def migrate_cgw_flow_metres_audit_columns():
+    """Add created_by_name / last_modified_by_name to cgw_flow_metres if missing."""
+    try:
+        insp = inspect(engine)
+        existing = {col['name'] for col in insp.get_columns('cgw_flow_metres')}
+        for col_name in ('created_by_name', 'last_modified_by_name'):
+            if col_name in existing:
+                continue
+            with engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN {col_name} VARCHAR(255) NULL'))
+            print(f'Added column {col_name} to cgw_flow_metres')
+    except Exception as e:
+        print(f'Migration error for cgw_flow_metres audit columns: {e}')
+
+
+migrate_cgw_flow_metres_audit_columns()
 
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
@@ -2430,6 +2450,8 @@ class CGWFlowMetre(BaseModel):
     noc_nocap_user_id: Optional[str] = None
     noc_nocap_password: Optional[str] = None
     cgw_attachments: Optional[Dict[str, List[CgwFileAttachment]]] = None
+    created_by_name: Optional[str] = None
+    last_modified_by_name: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
 
@@ -3590,7 +3612,9 @@ def create_cgw_flow_metres_bulk(
             status=data.status,
             renewal_date=data.renewal_date,
             review=data.review,
-            remarks=data.remarks
+            remarks=data.remarks,
+            created_by_name=current_user.name,
+            last_modified_by_name=current_user.name,
         ))
 
     db.add_all(new_items)
@@ -3666,7 +3690,9 @@ def create_cgw_flow_metre(data: CGWFlowMetreCreate, current_user: UserModel = De
         status=data.status,
         renewal_date=data.renewal_date,
         review=data.review,
-        remarks=data.remarks
+        remarks=data.remarks,
+        created_by_name=current_user.name,
+        last_modified_by_name=current_user.name,
     )
     db.add(new_item)
     try:
@@ -3730,6 +3756,7 @@ def update_cgw_flow_metre(inventory_id: str, data: CGWFlowMetreUpdate, current_u
     
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(item, key, value)
+    item.last_modified_by_name = current_user.name
     item.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(item)
@@ -3793,6 +3820,7 @@ def cgw_upload_media_attachment(
         item.calibration_certificate = None
     buckets[category].append({'id': str(uuid.uuid4()), 'file_name': safe_base, 'url': file_url})
     _cgw_persist_media_buckets(item, buckets)
+    item.last_modified_by_name = current_user.name
     item.updated_at = datetime.now(timezone.utc)
     try:
         db.commit()
@@ -3844,6 +3872,7 @@ def cgw_delete_media_attachment(
     buckets[category] = kept
     _cgw_delete_stored_attachment_file((removed or {}).get('url') or '')
     _cgw_persist_media_buckets(item, buckets)
+    item.last_modified_by_name = current_user.name
     item.updated_at = datetime.now(timezone.utc)
     try:
         db.commit()
@@ -3956,6 +3985,7 @@ def upload_or_update_cgw_noc(
         'noc_bhuneer_user_id', 'noc_bhuneer_password', 'noc_nocap_user_id', 'noc_nocap_password',
     ):
         flag_modified(item, attr)
+    item.last_modified_by_name = current_user.name
     item.updated_at = datetime.now(timezone.utc)
     try:
         db.commit()

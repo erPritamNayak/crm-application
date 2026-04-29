@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Eye, Upload, Download } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Eye, Upload, Download, History } from 'lucide-react';
 import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
 import { cn } from '@/lib/utils';
 import PiezometerAddWizardStep, {
@@ -561,6 +561,15 @@ const CGWFlowMetre = () => {
   const [nocRemotePreviewUrl, setNocRemotePreviewUrl] = useState('');
   const [nocRemotePreviewLoading, setNocRemotePreviewLoading] = useState(false);
   const nocRemoteBlobRef = useRef(null);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [historyItem, setHistoryItem] = useState(null);
+
+  const formatHistoryDateTime = (value) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString();
+  };
 
   const nocDocHref = (url) => {
     if (!url) return '';
@@ -1539,6 +1548,11 @@ const CGWFlowMetre = () => {
       const msg = error?.response?.data?.detail || 'Failed to download attachments ZIP';
       toast.error(typeof msg === 'string' ? msg : 'Failed to download attachments ZIP');
     }
+  };
+
+  const openHistoryDialog = (item) => {
+    setHistoryItem(item || null);
+    setHistoryDialogOpen(true);
   };
 
   const handleEdit = (item) => {
@@ -3376,6 +3390,15 @@ const CGWFlowMetre = () => {
                                 <Button
                                   variant="outline"
                                   size="sm"
+                                  className="h-7 w-7 p-0 border-gray-200 text-xs text-slate-700 hover:bg-slate-50"
+                                  title="History"
+                                  onClick={() => openHistoryDialog(item)}
+                                >
+                                  <History className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   className="h-7 w-7 p-0 border-gray-200 text-xs text-gray-700 hover:bg-gray-50"
                                   title="Edit"
                                   onClick={() => handleEdit(item)}
@@ -3815,6 +3838,37 @@ const CGWFlowMetre = () => {
                   Close
                 </Button>
               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={historyDialogOpen}
+        onOpenChange={(open) => {
+          setHistoryDialogOpen(open);
+          if (!open) setHistoryItem(null);
+        }}
+      >
+        <DialogContent className="max-w-md bg-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-4 w-4" />
+              History
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Created by</p>
+              <p className="font-medium text-gray-900">{historyItem?.created_by_name || '—'}</p>
+            </div>
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Created date</p>
+              <p className="font-medium text-gray-900">{formatHistoryDateTime(historyItem?.created_at)}</p>
+            </div>
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Last modified by</p>
+              <p className="font-medium text-gray-900">{historyItem?.last_modified_by_name || historyItem?.created_by_name || '—'}</p>
             </div>
           </div>
         </DialogContent>
