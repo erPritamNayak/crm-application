@@ -7066,9 +7066,9 @@ def get_expenses_summary_by_employee(
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Admin only: total approved/rejected/pending expenses per employee for salary compensation."""
-    if current_user.role != 'Admin':
-        raise HTTPException(status_code=403, detail='Only Admin can view expense summary')
+    """Admin / Accountant: total approved/rejected/pending expenses per employee for salary compensation."""
+    if current_user.role not in ['Admin', 'Accountant']:
+        raise HTTPException(status_code=403, detail='Only Admin or Accountant can view expense summary')
     from datetime import datetime as dt
     now = dt.now()
     y = year if year is not None else now.year
@@ -9077,8 +9077,8 @@ def get_fuel_claims(
     
     query = db.query(FuelExpenseClaimModel)
     
-    # Filter by employee for non-admin users
-    if current_user.role not in ['Admin', 'Manager', 'HR']:
+    # Filter by employee for users without org-wide claim visibility
+    if current_user.role not in ['Admin', 'Manager', 'HR', 'Accountant']:
         query = query.filter(FuelExpenseClaimModel.employee_id == current_user.employee_id)
     
     if status:

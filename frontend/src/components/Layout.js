@@ -25,7 +25,8 @@ import {
   Droplets,
   ChevronLeft,
   ChevronRight,
-  BarChart3
+  BarChart3,
+  Wallet
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -68,6 +69,7 @@ export const Layout = ({ children }) => {
     { icon: FileText, label: 'Leaves', path: '/leaves', permission: 'leaves' },
     { icon: CalendarDays, label: 'Government Holidays', path: '/government-holidays', permission: 'holidays' },
     { icon: Receipt, label: 'Expenses', path: '/expenses', permission: 'expenses' },
+    { icon: Wallet, label: 'Salary', path: '/salary', allowedRoles: ['Admin', 'Accountant'] },
     { icon: Fuel, label: 'Vehicle Tracking', path: '/vehicles', permission: 'vehicles' },
     { icon: Shield, label: 'Roles', path: '/roles', permission: 'roles' },
     { icon: Briefcase, label: 'Workspace', path: '/workspace', permission: 'workspace' },
@@ -78,6 +80,9 @@ export const Layout = ({ children }) => {
 
   const filteredNavItems = navItems.filter((item) => {
     if (item.adminOnly && user?.role !== 'Admin') return false;
+    if (Array.isArray(item.allowedRoles) && item.allowedRoles.length > 0) {
+      return item.allowedRoles.includes(user?.role);
+    }
     const hasPermission =
       user?.role === 'Admin' ||
       (Array.isArray(user?.permissions) && user.permissions.includes(item.permission));

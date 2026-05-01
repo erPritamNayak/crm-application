@@ -27,6 +27,7 @@ import Vehicles from '@/pages/Vehicles';
 import Inventory from '@/pages/Inventory';
 import LocationTracker from '@/pages/LocationTracker';
 import CGWFlowMetre from '@/pages/CGWFlowMetre';
+import { Salary } from '@/pages/Salary';
 
 function App() {
   return (
@@ -230,6 +231,17 @@ function App() {
                 <ProtectedRoute>
                   <Layout>
                     <Payroll />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/salary"
+              element={
+                <ProtectedRoute allowedRoles={['Admin', 'Accountant']}>
+                  <Layout>
+                    <Salary />
                   </Layout>
                 </ProtectedRoute>
               }
