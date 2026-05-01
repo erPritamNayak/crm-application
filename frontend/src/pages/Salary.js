@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { buildSalaryAttendanceMetrics } from '@/utils/attendanceGridMetrics';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -67,9 +68,10 @@ export const Salary = () => {
     if (!canAccess) return;
     setLoading(true);
     try {
-      const [empRes, attRes, sumRes, fuelRes] = await Promise.all([
+      const [empRes, attRes, holRes, sumRes, fuelRes] = await Promise.all([
         axios.get(`${API}/employees`, { headers: authHeader() }),
-        axios.get(`${API}/attendance/summary`, { params: { month }, headers: authHeader() }),
+        axios.get(`${API}/attendance`, { params: { month }, headers: authHeader() }),
+        axios.get(`${API}/government-holidays`, { params: { year }, headers: authHeader() }),
         axios.get(`${API}/expenses/summary-by-employee`, {
           params: { month: monthNum, year },
           headers: authHeader()
@@ -83,11 +85,10 @@ export const Salary = () => {
       const emps = (empRes.data || []).filter((e) => (e.status || 'Active') === 'Active');
       setEmployees(emps);
 
-      const attMap = {};
-      (attRes.data || []).forEach((row) => {
-        attMap[row.employee_id] = row;
-      });
-      setAttendanceById(attMap);
+      /** Same present / working-day rules as Attendance grid (not `/attendance/summary`). */
+      setAttendanceById(
+        buildSalaryAttendanceMetrics(emps, attRes.data || [], holRes.data || [], month)
+      );
 
       const expMap = {};
       (sumRes.data?.employees || []).forEach((row) => {
