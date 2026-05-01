@@ -21,6 +21,7 @@ from calendar import monthrange
 import jwt
 import bcrypt
 from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 import io
 import uuid
@@ -8773,49 +8774,245 @@ def generate_payslip(
     if not employee:
         raise HTTPException(status_code=404, detail='Employee not found')
     
+    parts = (month or '').split('-')
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail='Month must be in YYYY-MM format')
+    try:
+        year = int(parts[0])
+        month_num = int(parts[1])
+    except ValueError:
+        raise HTTPException(status_code=400, detail='Month must be in YYYY-MM format')
+    if month_num < 1 or month_num > 12:
+        raise HTTPException(status_code=400, detail='Month must be in YYYY-MM format')
+
     attendance_records = db.query(AttendanceModel).filter(
         AttendanceModel.employee_id == employee.employee_id,
         AttendanceModel.date.like(f'{month}%')
     ).all()
-    
-    working_days = len(attendance_records)
-    total_hours = sum(rec.work_hours for rec in attendance_records)
-    
-    monthly_salary = employee.salary
-    basic = monthly_salary * 0.5
-    hra = monthly_salary * 0.2
-    allowances = monthly_salary * 0.3
-    
+    records_by_date = {r.date: r for r in attendance_records}
+
+    month_start = f'{year}-{month_num:02d}-01'
+    month_end = f'{year}-{month_num:02d}-{monthrange(year, month_num)[1]:02d}'
+    holiday_dates = set(
+        row.date for row in db.query(GovernmentHolidayModel).filter(
+            GovernmentHolidayModel.date >= month_start,
+            GovernmentHolidayModel.date <= month_end
+        ).all()
+    )
+    today = attendance_local_now().date()
+    working_days = 0
+    present_days = 0
+    for day in range(1, monthrange(year, month_num)[1] + 1):
+        dt = date(year, month_num, day)
+        ds = dt.isoformat()
+        if dt > today:
+            continue
+        if dt.weekday() == 6:
+            continue
+        if ds in holiday_dates:
+            continue
+        working_days += 1
+        rec = records_by_date.get(ds)
+        if not rec:
+            continue
+        counts_as_present = (
+            (getattr(rec, 'is_tour', 0) == 1 and getattr(rec, 'tour_approval_status', None) == 'approved')
+            or getattr(rec, 'status', None) in ['Present', 'Leave']
+        )
+        if counts_as_present:
+            present_days += 1
+
+    absent_days = max(working_days - present_days, 0)
+    total_hours = sum(float(rec.work_hours or 0) for rec in attendance_records)
+
+    expenses = db.query(ExpenseModel).filter(ExpenseModel.employee_id == employee.employee_id).all()
+    expense_approved = 0.0
+    for exp in expenses:
+        created_at = getattr(exp, 'created_at', None)
+        if created_at and (created_at.year != year or created_at.month != month_num):
+            continue
+        amt = float(exp.amount or 0)
+        if exp.status == 'Approved':
+            expense_approved += amt
+        elif exp.status == 'Partially-Approved':
+            expense_approved += float(exp.accountant_approved_amount or 0)
+
+    fuel_claims = db.query(FuelExpenseClaimModel).filter(
+        FuelExpenseClaimModel.employee_id == employee.employee_id
+    ).all()
+    vehicle_approved = 0.0
+    for claim in fuel_claims:
+        if claim.claim_status not in ['Approved', 'Partially-Approved']:
+            continue
+        created_at = getattr(claim, 'created_at', None)
+        if created_at and (created_at.year != year or created_at.month != month_num):
+            continue
+        vehicle_approved += float(
+            claim.approved_amount if claim.approved_amount is not None else (claim.claimed_amount or 0)
+        )
+
+    monthly_salary = float(employee.salary or 0)
+    per_day = (monthly_salary / working_days) if working_days > 0 else 0.0
+    lop_deduction = per_day * absent_days
+    pro_rated_salary = max(monthly_salary - lop_deduction, 0.0)
+    net_salary = pro_rated_salary + expense_approved + vehicle_approved
+
+    def money(v: float) -> str:
+        return f'Rs {v:,.2f}'
+
+    def amount_in_words(num: float) -> str:
+        n = int(round(num))
+        if n == 0:
+            return 'Zero Rupees Only'
+        ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+                'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+                'Seventeen', 'Eighteen', 'Nineteen']
+        tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
+
+        def two_digits(x: int) -> str:
+            if x < 20:
+                return ones[x]
+            return (tens[x // 10] + (' ' + ones[x % 10] if x % 10 else '')).strip()
+
+        def three_digits(x: int) -> str:
+            h = x // 100
+            rem = x % 100
+            if h and rem:
+                return f"{ones[h]} Hundred {two_digits(rem)}"
+            if h:
+                return f"{ones[h]} Hundred"
+            return two_digits(rem)
+
+        parts_words = []
+        crore = n // 10000000
+        n %= 10000000
+        lakh = n // 100000
+        n %= 100000
+        thousand = n // 1000
+        n %= 1000
+        hundred_part = n
+        if crore:
+            parts_words.append(f"{two_digits(crore)} Crore")
+        if lakh:
+            parts_words.append(f"{two_digits(lakh)} Lakh")
+        if thousand:
+            parts_words.append(f"{two_digits(thousand)} Thousand")
+        if hundred_part:
+            parts_words.append(three_digits(hundred_part))
+        return (' '.join(parts_words) + ' Rupees Only').strip()
+
     buffer = io.BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
-    
-    p.setFont('Helvetica-Bold', 20)
-    p.drawString(50, height - 50, 'PAYSLIP')
-    
-    p.setFont('Helvetica', 12)
-    p.drawString(50, height - 80, f'Employee: {employee.name}')
-    p.drawString(50, height - 100, f'Employee ID: {employee.employee_id}')
-    p.drawString(50, height - 120, f'Department: {employee.department}')
-    p.drawString(50, height - 140, f'Month: {month}')
-    
-    y = height - 180
-    p.drawString(50, y, 'Salary Breakdown:')
+
+    left = 28
+    right = width - 28
+    row_h = 24
+    y = height - 36
+
+    # Header
+    p.setFillColor(colors.HexColor('#1f2937'))
+    p.setFont('Helvetica-Bold', 16)
+    p.drawString(left, y, 'RESOLINE TECHBIS')
+    p.setFont('Helvetica-Bold', 10)
+    p.drawRightString(right, y + 2, 'www.resoline.in')
+    y -= 34
+    p.setFont('Helvetica-Bold', 22)
+    p.setFillColor(colors.HexColor('#0f172a'))
+    month_title = datetime(year, month_num, 1).strftime('%B %Y').upper()
+    p.drawCentredString(width / 2, y, f'PAYSLIP - {month_title}')
     y -= 30
-    p.drawString(70, y, f'Basic Salary: ₹{basic:.2f}')
-    y -= 20
-    p.drawString(70, y, f'HRA: ₹{hra:.2f}')
-    y -= 20
-    p.drawString(70, y, f'Allowances: ₹{allowances:.2f}')
-    y -= 30
+
+    # Employee Information block
+    p.setFillColor(colors.HexColor('#dbe3ec'))
+    p.rect(left, y - row_h + 4, right - left, row_h, fill=1, stroke=1)
+    p.setFillColor(colors.black)
     p.setFont('Helvetica-Bold', 12)
-    p.drawString(70, y, f'Gross Salary: ₹{monthly_salary:.2f}')
-    
-    y -= 40
+    p.drawCentredString((left + right) / 2, y - 13, 'Employee Information')
+    y -= row_h
+    p.setFont('Helvetica', 11)
+    emp_rows = [
+        (f'Employee Name: {employee.name}', f'Employee ID: {employee.employee_id}', f'Date of Joining: {employee.joining_date or "-"}'),
+        (f'Designation: {employee.job_role or "-"}', f'Department: {employee.department or "-"}', 'Bank Account No: -'),
+    ]
+    col_w = (right - left) / 3
+    for r in emp_rows:
+        for i in range(3):
+            p.rect(left + (i * col_w), y - row_h + 4, col_w, row_h, fill=0, stroke=1)
+            p.drawString(left + (i * col_w) + 6, y - 14, r[i])
+        y -= row_h
+    y -= 14
+
+    # Helper to draw earnings/deductions section rows
+    def draw_section(title: str, title_fill, rows: List[Tuple[str, str, str]]):
+        nonlocal y
+        total_w = right - left
+        col1 = total_w * 0.74
+        col2 = total_w * 0.06
+        col3 = total_w - col1 - col2
+        p.setFillColor(title_fill)
+        p.rect(left, y - row_h + 4, total_w, row_h, fill=1, stroke=1)
+        p.setFillColor(colors.black)
+        p.setFont('Helvetica-Bold', 13)
+        p.drawString(left + 8, y - 14, title)
+        y -= row_h
+        p.setFont('Helvetica', 11)
+        for label, sign, amt in rows:
+            p.rect(left, y - row_h + 4, col1, row_h, fill=0, stroke=1)
+            p.rect(left + col1, y - row_h + 4, col2, row_h, fill=0, stroke=1)
+            p.rect(left + col1 + col2, y - row_h + 4, col3, row_h, fill=0, stroke=1)
+            p.drawString(left + 8, y - 14, label)
+            p.drawCentredString(left + col1 + (col2 / 2), y - 14, sign)
+            p.drawRightString(left + col1 + col2 + col3 - 8, y - 14, amt)
+            y -= row_h
+
+    draw_section(
+        'EMPLOYEE EARNINGS',
+        colors.HexColor('#dbe3ec'),
+        [
+            ('Basic Salary (as contract)', '+', money(monthly_salary)),
+            ('Monthly gross (contract)', '+', money(monthly_salary)),
+            ('Pro-rated salary after attendance', '+', money(pro_rated_salary)),
+            ('Expense reimbursement (approved)', '+', money(expense_approved)),
+            ('Vehicle / fuel claims (approved)', '+', money(vehicle_approved)),
+        ]
+    )
+    y -= 10
+    draw_section(
+        'DEDUCTIONS',
+        colors.HexColor('#f1d0d0'),
+        [
+            (f'Unpaid working days ({absent_days} x {money(per_day)} / day)', '-', money(lop_deduction)),
+            ('Tax', '-', '-'),
+            ('Other', '-', '-'),
+        ]
+    )
+    y -= 10
+
+    # Summary
+    p.setFillColor(colors.HexColor('#dbe3ec'))
+    p.rect(left, y - row_h + 4, right - left, row_h, fill=1, stroke=1)
+    p.setFillColor(colors.black)
+    p.setFont('Helvetica-Bold', 13)
+    p.drawString(left + 8, y - 14, 'SUMMARY')
+    y -= row_h
+    p.rect(left, y - 45 + 4, right - left, 45, fill=0, stroke=1)
+    p.setFont('Helvetica-Bold', 20)
+    p.drawString(left + 10, y - 26, 'Net salary payable')
+    p.drawRightString(right - 10, y - 26, money(net_salary))
+    y -= 45
+    p.rect(left, y - row_h + 4, right - left, row_h, fill=0, stroke=1)
+    p.setFont('Helvetica-Bold', 12)
+    p.drawString(left + 8, y - 14, f'Net Payable in Words: {amount_in_words(net_salary)}')
+    y -= row_h + 18
+
     p.setFont('Helvetica', 12)
-    p.drawString(50, y, f'Working Days: {working_days}')
+    p.drawString(left + 4, y, 'Authorised Signature: ____________________')
+    p.drawRightString(right, y, f'Print Date: {datetime.now().strftime("%d-%b-%Y")}')
     y -= 20
-    p.drawString(50, y, f'Total Hours: {total_hours:.2f}')
+    p.setFont('Helvetica', 10)
+    p.drawString(left + 4, y, 'Company Address: [A generic address]')
+    p.drawRightString(right, y, f'Worked Days: {present_days}/{working_days}  |  Total Hours: {total_hours:.2f}')
     
     p.showPage()
     p.save()
