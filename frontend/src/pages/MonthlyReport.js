@@ -25,6 +25,14 @@ const formatPunch = (t) => {
   return t;
 };
 
+/** Row background: Present, Absent, or Holiday only. */
+const attendanceGridRowClass = (row) => {
+  const s = row.status;
+  if (s === 'Holiday') return 'bg-emerald-50 hover:bg-emerald-100/70 ';
+  if (s === 'Absent') return 'bg-rose-50 hover:bg-rose-100/70 ';
+  return 'bg-white hover:bg-gray-50/80 ';
+};
+
 export const MonthlyReport = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'Admin';
@@ -144,7 +152,10 @@ export const MonthlyReport = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-gray-900">Monthly attendance</h1>
-          <p className="text-gray-600 text-sm mt-1">Date-wise login, logout, and effective hours for the selected month.</p>
+          <p className="text-gray-600 text-sm mt-1">
+            Full calendar month with each day marked Present, Absent, or Holiday (Sundays, public holidays, and
+            future dates count as Holiday).
+          </p>
           {data?.employee_name ? (
             <p className="text-gray-600 text-sm mt-1 flex flex-wrap items-center gap-2">
               <User className="h-4 w-4 text-gray-400 shrink-0" />
@@ -260,9 +271,21 @@ export const MonthlyReport = () => {
             <div className="bg-blue-600 text-white px-4 sm:px-5 py-3">
               <h2 className="text-sm font-semibold">Attendance grid</h2>
               <p className="text-blue-100 text-xs mt-0.5">
-                Login = first punch-in · Logout = last punch-out · Effective hours = total for the day ·{' '}
-                <span className="text-yellow-100 font-medium">Yellow row = late login</span>
+                Each row is Present, Absent, or Holiday. Login = first punch-in · Logout = last punch-out · Effective
+                hours = total for the day (Holiday/Absent non-work days show —).
               </p>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-blue-50 leading-tight">
+                <span>
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-white border border-blue-200/80 align-middle mr-1" />
+                  Present
+                </span>
+                <span>
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-200 align-middle mr-1" /> Absent
+                </span>
+                <span>
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-200 align-middle mr-1" /> Holiday
+                </span>
+              </div>
             </div>
             <div className="overflow-x-auto table-scroll p-0">
               <table className={gridTableClass}>
@@ -282,26 +305,18 @@ export const MonthlyReport = () => {
                 </thead>
                 <tbody>
                   {days.map((row) => {
-                    let trClass = '';
-                    if (row.status === 'Leave') {
-                      trClass = 'bg-blue-50 hover:bg-blue-100/80 ';
-                    } else if (row.late_login) {
-                      trClass = 'bg-yellow-100 hover:bg-yellow-200/70 ';
-                    } else if (row.is_tour_day && row.tour_approved) {
-                      trClass = 'bg-pink-50 hover:bg-pink-100/70 ';
-                    } else if (row.is_tour_day && row.tour_pending_or_other) {
-                      trClass = 'bg-red-50 hover:bg-red-100/60 ';
-                    } else {
-                      trClass = 'bg-white hover:bg-gray-50/80 ';
-                    }
+                    const trClass = attendanceGridRowClass(row);
                     const hrs = Number(row.total_work_hours || 0);
+                    let effCell = '—';
+                    if (row.status === 'Present') effCell = hrs > 0 ? hrs.toFixed(2) : '0.00';
+
                     return (
                       <tr key={row.date} className={trClass}>
                         <td className="py-3 px-4 font-mono text-gray-900 align-middle">{row.date}</td>
                         <td className="py-3 px-4 font-mono text-gray-800 align-middle">{formatPunch(row.first_punch_in)}</td>
                         <td className="py-3 px-4 font-mono text-gray-800 align-middle">{formatPunch(row.last_punch_out)}</td>
                         <td className="py-3 px-4 font-mono text-right text-gray-900 font-medium tabular-nums align-middle">
-                          {row.status === 'Leave' ? '0.00' : hrs > 0 ? hrs.toFixed(2) : '—'}
+                          {effCell}
                         </td>
                       </tr>
                     );
@@ -323,7 +338,7 @@ export const MonthlyReport = () => {
             </div>
             {days.length === 0 && (
               <div className="p-12 text-center border-t border-gray-100">
-                <p className="text-gray-600">No attendance rows for this month yet.</p>
+                <p className="text-gray-600">No data for this month. Try again or pick another month.</p>
               </div>
             )}
           </Card>

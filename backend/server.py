@@ -6135,8 +6135,9 @@ def get_attendance_monthly_report(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Monthly attendance with per-day sessions (first in / last out),
-    late-login flag (first non-tour punch after 10:30), and tour markers.
+    Monthly attendance for every calendar day. Each day has ``status`` of Present, Absent, or Holiday only
+    (Sundays, government holidays, and future dates in the month count as Holiday; missing punch on a working
+    day is Absent). Punch times use first in / last out from sessions.
     Requires ``monthly-report`` permission. Non-admins always see their own linked ``employee_id`` only.
     Admins may pass ``employee_id`` (business employee id) to view any employee's report.
     """
@@ -6232,14 +6233,43 @@ def get_attendance_monthly_report(
         for s in sess_rows:
             session_map[s.attendance_id].append(s)
 
-    late_threshold = 10 * 60 + 30
+    holiday_dates = set(
+        row.date
+        for row in db.query(GovernmentHolidayModel)
+        .filter(
+            GovernmentHolidayModel.date >= month_start,
+            GovernmentHolidayModel.date <= month_end,
+        )
+        .all()
+    )
+    record_by_date: Dict[str, Any] = {r.date: r for r in records}
+    last_calendar_day = monthrange(year, month_num)[1]
+    today_local = attendance_local_now().date()
+
     days_out: List[Dict[str, Any]] = []
     total_work_sum = 0.0
     worked_days = 0
-    late_login_days = 0
-    tour_days_approved = 0
 
-    for record in records:
+    for day_num in range(1, last_calendar_day + 1):
+        date_str = f'{year}-{month_num:02d}-{day_num:02d}'
+        d = date(year, month_num, day_num)
+        record = record_by_date.get(date_str)
+        if record is None:
+            if d > today_local or d.weekday() == 6 or date_str in holiday_dates:
+                syn_status = 'Holiday'
+            else:
+                syn_status = 'Absent'
+            days_out.append(
+                {
+                    'date': date_str,
+                    'first_punch_in': None,
+                    'last_punch_out': None,
+                    'total_work_hours': 0.0,
+                    'status': syn_status,
+                }
+            )
+            continue
+
         sessions = session_map.get(record.id, [])
         first_punch_in = None
         last_punch_out = None
@@ -6255,17 +6285,6 @@ def get_attendance_monthly_report(
             first_punch_in = record.punch_in
             last_punch_out = record.punch_out
 
-        first_office = next((s for s in sessions if (s.is_tour or 0) != 1), None)
-        late_login = False
-        if first_office and first_office.punch_in:
-            pm = _punch_time_to_minutes(first_office.punch_in)
-            if pm is not None and pm > late_threshold:
-                late_login = True
-        elif not sessions and record.punch_in and (record.is_tour or 0) != 1:
-            pm = _punch_time_to_minutes(record.punch_in)
-            if pm is not None and pm > late_threshold:
-                late_login = True
-
         has_tour = (record.is_tour or 0) == 1 or any((s.is_tour or 0) == 1 for s in sessions)
         tour_approved = False
         if (record.is_tour or 0) == 1 and (record.tour_approval_status or '') == 'approved':
@@ -6274,8 +6293,6 @@ def get_attendance_monthly_report(
             tour_approved = any(
                 (s.is_tour or 0) == 1 and (s.tour_approval_status or '') == 'approved' for s in sessions
             )
-        tour_pending_or_other = bool(has_tour and not tour_approved)
-
         tw_raw = float(record.total_work_hours or 0.0)
         wh = float(record.work_hours or 0.0)
         # Keep worked_days aligned with Attendance Grid / Summary "present-day" logic:
@@ -6292,23 +6309,17 @@ def get_attendance_monthly_report(
         if counts_as_worked_day:
             worked_days += 1
 
-        if late_login:
-            late_login_days += 1
-        if has_tour and tour_approved:
-            tour_days_approved += 1
-
-        session_payload = [
-            {
-                'id': s.id,
-                'session_number': s.session_number,
-                'punch_in': s.punch_in,
-                'punch_out': s.punch_out,
-                'work_hours': float(s.work_hours or 0.0),
-                'is_tour': s.is_tour,
-                'tour_approval_status': s.tour_approval_status,
-            }
-            for s in sessions
-        ]
+        st = (record.status or '').strip()
+        if st == 'Leave':
+            grid_status = 'Present'
+        elif counts_as_worked_day or hours_for_day > 0 or st in ('Present', 'Half Day', 'Late'):
+            grid_status = 'Present'
+        elif d.weekday() == 6 or date_str in holiday_dates:
+            grid_status = 'Holiday'
+        elif st == 'Absent':
+            grid_status = 'Absent'
+        else:
+            grid_status = 'Absent'
 
         days_out.append(
             {
@@ -6316,13 +6327,7 @@ def get_attendance_monthly_report(
                 'first_punch_in': first_punch_in,
                 'last_punch_out': last_punch_out,
                 'total_work_hours': hours_for_day,
-                'status': record.status,
-                'is_tour_day': has_tour,
-                'tour_approved': tour_approved,
-                'tour_pending_or_other': tour_pending_or_other,
-                'tour_approval_status': record.tour_approval_status,
-                'late_login': late_login,
-                'sessions': session_payload,
+                'status': grid_status,
             }
         )
 
@@ -6344,8 +6349,6 @@ def get_attendance_monthly_report(
         'avg_hours_per_worked_day': avg_hours,
         'total_work_hours': round(total_work_sum, 2),
         'worked_days': worked_days,
-        'late_login_days': late_login_days,
-        'tour_days_approved': tour_days_approved,
     }
 
 
