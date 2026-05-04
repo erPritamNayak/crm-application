@@ -55,6 +55,7 @@ export const Expenses = () => {
   const [summaryMonth, setSummaryMonth] = useState(new Date().getMonth() + 1);
   const [summaryYear, setSummaryYear] = useState(new Date().getFullYear());
   const [summaryEmployeeFilter, setSummaryEmployeeFilter] = useState('');
+  const [requestEmployeeFilter, setRequestEmployeeFilter] = useState('');
   const [expandedEmployees, setExpandedEmployees] = useState({});
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFileUrl, setPreviewFileUrl] = useState(null);
@@ -400,9 +401,10 @@ export const Expenses = () => {
       expenses.filter((exp) => {
         if (activeTab !== 'All' && exp.status !== activeTab) return false;
         if (!canApprove && exp.employee_id !== user?.employee_id) return false;
+        if (requestEmployeeFilter && exp.employee_id !== requestEmployeeFilter) return false;
         return true;
       }),
-    [expenses, activeTab, canApprove, user?.employee_id]
+    [expenses, activeTab, canApprove, user?.employee_id, requestEmployeeFilter]
   );
 
   const expensesForUser = useMemo(
@@ -413,6 +415,21 @@ export const Expenses = () => {
       }),
     [expenses, canApprove, user?.employee_id]
   );
+
+  const requestEmployeeOptions = useMemo(() => {
+    const byEmployee = new Map();
+    expensesForUser.forEach((exp) => {
+      const id = exp.employee_id || '';
+      if (!id || byEmployee.has(id)) return;
+      byEmployee.set(id, {
+        employee_id: id,
+        employee_name: exp.employee_name || id
+      });
+    });
+    return Array.from(byEmployee.values()).sort((a, b) =>
+      String(a.employee_name || '').localeCompare(String(b.employee_name || ''))
+    );
+  }, [expensesForUser]);
 
   const expenseKpis = useMemo(() => {
     let pending = 0;
@@ -976,22 +993,38 @@ export const Expenses = () => {
           )}
 
           <Card className="rounded-2xl border-0 bg-white p-3 shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/60">
-            <div className="flex flex-wrap gap-1">
-              {['All', 'Pending', 'Partially-Approved', 'Accountant-Approved', 'Approved', 'Rejected'].map((tab) => (
-                <Button
-                  key={tab}
-                  variant="ghost"
-                  size="sm"
-                  className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-4 text-sm font-semibold ${
-                    activeTab === tab
-                      ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-100'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                  onClick={() => setActiveTab(tab)}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-1">
+                {['All', 'Pending', 'Partially-Approved', 'Accountant-Approved', 'Approved', 'Rejected'].map((tab) => (
+                  <Button
+                    key={tab}
+                    variant="ghost"
+                    size="sm"
+                    className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-4 text-sm font-semibold ${
+                      activeTab === tab
+                        ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-100'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                    onClick={() => setActiveTab(tab)}
+                  >
+                    {tab}
+                  </Button>
+                ))}
+              </div>
+              <div className="ml-auto w-full sm:w-auto">
+                <select
+                  value={requestEmployeeFilter}
+                  onChange={(e) => setRequestEmployeeFilter(e.target.value)}
+                  className="h-9 w-full min-w-[220px] rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
                 >
-                  {tab}
-                </Button>
-              ))}
+                  <option value="">All employees</option>
+                  {requestEmployeeOptions.map((emp) => (
+                    <option key={emp.employee_id} value={emp.employee_id}>
+                      {emp.employee_name} ({emp.employee_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </Card>
 
@@ -1003,11 +1036,12 @@ export const Expenses = () => {
                   <p className="text-xs text-slate-400">Select a row to preview the receipt and notes.</p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                  <table className="w-full min-w-[860px] border-collapse text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                         <th className="px-3 py-3">Employee</th>
                         <th className="px-3 py-3">Category</th>
+                        <th className="px-3 py-3">Date</th>
                         <th className="px-3 py-3 text-right">Amount</th>
                         <th className="max-w-[200px] px-3 py-3">Description</th>
                         <th className="px-3 py-3 text-center">L1</th>
@@ -1017,7 +1051,7 @@ export const Expenses = () => {
                     <tbody>
                       {filteredExpenses.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-500">
+                          <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">
                             No requests match this filter.
                           </td>
                         </tr>
@@ -1051,6 +1085,11 @@ export const Expenses = () => {
                               </div>
                             </td>
                             <td className="px-3 py-3 text-slate-700">{exp.category}</td>
+                            <td className="px-3 py-3 text-slate-700">
+                              {exp.created_at
+                                ? new Date(exp.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })
+                                : '—'}
+                            </td>
                             <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-900">
                               ₹{Number(exp.amount).toLocaleString('en-IN')}
                             </td>

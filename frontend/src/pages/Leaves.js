@@ -23,7 +23,6 @@ import {
   Clock,
   Calendar,
   Settings2,
-  ChevronLeft,
   ChevronRight,
   ChevronDown,
   User,
@@ -32,11 +31,6 @@ import {
 } from 'lucide-react';
 import {
   format,
-  endOfMonth,
-  eachDayOfInterval,
-  addMonths,
-  subMonths,
-  isWithinInterval,
   parseISO
 } from 'date-fns';
 
@@ -96,8 +90,6 @@ export const Leaves = () => {
     url: '',
     name: 'Attachment'
   });
-  const [calendarMonth, setCalendarMonth] = useState(format(new Date(), 'yyyy-MM'));
-  const [holidayDates, setHolidayDates] = useState([]);
   const [formData, setFormData] = useState({
     employee_id: '',
     employee_name: '',
@@ -114,15 +106,6 @@ export const Leaves = () => {
     fetchLeaveBalance();
     fetchLeavePolicy();
   }, []);
-
-  useEffect(() => {
-    const year = parseInt(String(calendarMonth).split('-')[0], 10);
-    if (!year) return;
-    axios
-      .get(`${API}/government-holidays`, { params: { year }, ...authHeaders() })
-      .then((res) => setHolidayDates((res.data || []).map((h) => h.date)))
-      .catch(() => setHolidayDates([]));
-  }, [calendarMonth]);
 
   const fetchLeaveBalance = async () => {
     try {
@@ -400,15 +383,6 @@ export const Leaves = () => {
     return true;
   });
 
-  const ownLeavesForCalendar = useMemo(() => {
-    if (!user?.employee_id) return [];
-    return leaves.filter(
-      (l) =>
-        String(l.employee_id) === String(user.employee_id) &&
-        (l.status === 'Pending' || l.status === 'Approved')
-    );
-  }, [leaves, user?.employee_id]);
-
   const pendingRequestCount = useMemo(
     () =>
       leaves.filter(
@@ -420,36 +394,6 @@ export const Leaves = () => {
       ).length,
     [leaves, canApprove, user?.employee_id, employeeFilter]
   );
-
-  const calendarGridCells = useMemo(() => {
-    const [y, m] = String(calendarMonth).split('-').map((x) => parseInt(x, 10));
-    if (!y || !m) return [];
-    const ms = new Date(y, m - 1, 1);
-    const pad = ms.getDay();
-    const end = endOfMonth(ms);
-    const days = eachDayOfInterval({ start: ms, end });
-    return [...Array(pad).fill(null), ...days];
-  }, [calendarMonth]);
-
-  const dayMeta = (dateStr) => {
-    const isHol = holidayDates.includes(dateStr);
-    let leavePending = false;
-    let leaveApproved = false;
-    ownLeavesForCalendar.forEach((lv) => {
-      try {
-        const a = parseISO(String(lv.start_date));
-        const b = parseISO(String(lv.end_date));
-        const d = parseISO(dateStr);
-        if (isWithinInterval(d, { start: a, end: b })) {
-          if (lv.status === 'Pending') leavePending = true;
-          if (lv.status === 'Approved') leaveApproved = true;
-        }
-      } catch {
-        /* ignore */
-      }
-    });
-    return { isHol, leavePending, leaveApproved };
-  };
 
   if (loading) {
     return (
@@ -873,8 +817,8 @@ export const Leaves = () => {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        <Card className="overflow-hidden rounded-2xl border-0 bg-white shadow-[0_4px_24px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/60 lg:col-span-7">
+      <div className="grid grid-cols-1 gap-5">
+        <Card className="overflow-hidden rounded-2xl border-0 bg-white shadow-[0_4px_24px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/60">
           <div className="border-b border-slate-100 px-5 py-4">
             <h2 className="text-lg font-bold text-slate-900">My requests (current & past)</h2>
             {canApprove && (
@@ -884,11 +828,12 @@ export const Leaves = () => {
           {filteredLeaves.length > 0 ? (
             <>
               <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[640px] text-left text-sm">
+                <table className="w-full min-w-[760px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                       {canApprove && <th className="px-4 py-3">Employee</th>}
                       <th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Reason</th>
                       <th className="px-4 py-3">Dates</th>
                       <th className="px-4 py-3">Days</th>
                       <th className="px-4 py-3">Status</th>
@@ -911,7 +856,9 @@ export const Leaves = () => {
                         )}
                         <td className="px-4 py-3">
                           <div className="font-semibold text-slate-900">{leaveTypeLabel(leave.leave_type)}</div>
-                          <div className="mt-0.5 line-clamp-2 max-w-[220px] text-xs text-slate-500">{leave.reason}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="line-clamp-3 max-w-[280px] text-sm text-slate-700">{leave.reason}</div>
                           {leave.attachment_path && (
                             <button
                               type="button"
@@ -1004,6 +951,7 @@ export const Leaves = () => {
                     <p className="truncate text-xs text-slate-500">{leave.employee_name}</p>
                   )}
                   <p className="text-sm text-slate-600">{formatLeaveRange(leave.start_date, leave.end_date, leave.days)}</p>
+                  <p className="mt-1 text-sm text-slate-700 line-clamp-2">{leave.reason}</p>
                   {leave.attachment_path && (
                     <button
                       type="button"
@@ -1058,88 +1006,6 @@ export const Leaves = () => {
           )}
         </Card>
 
-        <Card className="overflow-hidden rounded-2xl border-0 bg-white shadow-[0_4px_24px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/60 lg:col-span-5">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-9 w-9 rounded-xl text-slate-600"
-              onClick={() => setCalendarMonth(format(subMonths(new Date(`${calendarMonth}-01`), 1), 'yyyy-MM'))}
-              aria-label="Previous month"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-sky-600" />
-              <input
-                type="month"
-                value={calendarMonth}
-                onChange={(e) => setCalendarMonth(e.target.value)}
-                className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-sm font-bold text-slate-900 shadow-sm"
-              />
-            </div>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-9 w-9 rounded-xl text-slate-600"
-              onClick={() => setCalendarMonth(format(addMonths(new Date(`${calendarMonth}-01`), 1), 'yyyy-MM'))}
-              aria-label="Next month"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="p-4">
-            <div className="mb-2 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-slate-400">
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                <div key={d}>{d}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {calendarGridCells.map((day, idx) => {
-                if (!day) return <div key={`e-${idx}`} className="aspect-square" />;
-                const dateStr = format(day, 'yyyy-MM-dd');
-                const wd = day.getDay();
-                const weekend = wd === 0 || wd === 6;
-                const meta = dayMeta(dateStr);
-                let cellClass = 'text-slate-800 hover:bg-slate-50';
-                if (meta.leavePending) {
-                  cellClass = 'bg-amber-100 font-semibold text-amber-900 ring-1 ring-amber-200/80';
-                } else if (meta.leaveApproved) {
-                  cellClass = 'bg-emerald-50 font-medium text-emerald-900 ring-1 ring-emerald-200/70';
-                } else if (meta.isHol) {
-                  cellClass = 'bg-sky-100 font-semibold text-sky-900 ring-1 ring-sky-200/80';
-                } else if (weekend) {
-                  cellClass = 'text-slate-400 ring-1 ring-slate-200/80 bg-slate-50';
-                }
-                return (
-                  <div
-                    key={dateStr}
-                    className={`flex aspect-square items-center justify-center rounded-lg text-xs font-medium ${cellClass}`}
-                    title={dateStr}
-                  >
-                    {format(day, 'd')}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
-              <span className="inline-flex items-center gap-2">
-                <span className="h-3 w-3 rounded bg-sky-200 ring-1 ring-sky-300/80" />
-                Upcoming holiday
-              </span>
-              <span className="inline-flex items-center gap-2">
-                <span className="h-3 w-3 rounded bg-amber-100 ring-1 ring-amber-200/80" />
-                Your leave (pending)
-              </span>
-              <span className="inline-flex items-center gap-2">
-                <span className="h-3 w-3 rounded bg-emerald-50 ring-1 ring-emerald-200/70" />
-                Your leave (approved)
-              </span>
-            </div>
-          </div>
-        </Card>
       </div>
 
       <Button
