@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import List, Optional, Literal, Any, Dict, Tuple
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta, date
 from calendar import monthrange
 import jwt
@@ -6349,6 +6349,138 @@ def get_attendance_monthly_report(
         'avg_hours_per_worked_day': avg_hours,
         'total_work_hours': round(total_work_sum, 2),
         'worked_days': worked_days,
+    }
+
+
+@api_router.get('/attendance/monthly-late-report')
+def get_attendance_monthly_late_report(
+    month: str,
+    employee_id: Optional[str] = None,
+    current_user: UserModel = Depends(require_permission('monthly-report')),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Late punch-in and punch-out requests for the month (with employee reasons), for analytics on the monthly report.
+    Same access rules as ``/attendance/monthly-report``.
+    """
+    try:
+        parts = month.split('-')
+        if len(parts) != 2:
+            raise ValueError('bad')
+        year, month_num = int(parts[0]), int(parts[1])
+        if month_num < 1 or month_num > 12:
+            raise ValueError('bad')
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail='Invalid month; use YYYY-MM')
+
+    requested = (employee_id or '').strip()
+    if current_user.role == 'Admin':
+        if requested:
+            emp_row = db.query(EmployeeModel).filter(EmployeeModel.employee_id == requested).first()
+            if not emp_row:
+                raise HTTPException(status_code=404, detail='Employee not found')
+            emp_id = requested
+        elif current_user.employee_id:
+            emp_id = current_user.employee_id
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail='Select an employee (pass employee_id), or link an employee profile to your admin account.',
+            )
+    else:
+        if not current_user.employee_id:
+            raise HTTPException(status_code=403, detail='Employee profile not linked to your account')
+        if requested and requested != current_user.employee_id:
+            raise HTTPException(status_code=403, detail='You can only view your own monthly report')
+        emp_id = current_user.employee_id
+
+    month_start = f'{year}-{month_num:02d}-01'
+    month_end = f'{year}-{month_num:02d}-{monthrange(year, month_num)[1]:02d}'
+
+    late_in_rows = (
+        db.query(LatePunchInRequestModel)
+        .filter(
+            LatePunchInRequestModel.employee_id == emp_id,
+            LatePunchInRequestModel.punch_in_date >= month_start,
+            LatePunchInRequestModel.punch_in_date <= month_end,
+        )
+        .order_by(LatePunchInRequestModel.punch_in_date.asc(), LatePunchInRequestModel.requested_at.asc())
+        .all()
+    )
+    late_out_rows = (
+        db.query(LatePunchOutRequestModel)
+        .filter(
+            LatePunchOutRequestModel.employee_id == emp_id,
+            LatePunchOutRequestModel.punch_out_date >= month_start,
+            LatePunchOutRequestModel.punch_out_date <= month_end,
+        )
+        .order_by(LatePunchOutRequestModel.punch_out_date.asc(), LatePunchOutRequestModel.requested_at.asc())
+        .all()
+    )
+
+    late_logins = [_serialize_late_punch_in_request(r) for r in late_in_rows]
+    late_logouts = [_serialize_late_punch_out_request(r) for r in late_out_rows]
+
+    reason_counter: Counter = Counter()
+    for r in late_in_rows:
+        key = (getattr(r, 'employee_reason', None) or '').strip() or 'No reason given'
+        reason_counter[key] += 1
+    reason_breakdown = [{'name': k, 'value': v} for k, v in reason_counter.most_common(16)]
+
+    late_in_by_date: Dict[str, int] = defaultdict(int)
+    late_in_count_by_date: Dict[str, int] = defaultdict(int)
+    for r in late_in_rows:
+        ds = r.punch_in_date or ''
+        if ds:
+            late_in_by_date[ds] += int(r.minutes_late or 0)
+            late_in_count_by_date[ds] += 1
+    late_in_minutes_by_date = [
+        {'date': ds, 'minutes': late_in_by_date[ds], 'events': late_in_count_by_date[ds]}
+        for ds in sorted(late_in_by_date.keys())
+    ]
+
+    late_out_by_date: Dict[str, int] = defaultdict(int)
+    late_out_count_by_date: Dict[str, int] = defaultdict(int)
+    for r in late_out_rows:
+        ds = r.punch_out_date or ''
+        if ds:
+            late_out_by_date[ds] += int(r.minutes_late or 0)
+            late_out_count_by_date[ds] += 1
+    late_out_minutes_by_date = [
+        {'date': ds, 'minutes': late_out_by_date[ds], 'events': late_out_count_by_date[ds]}
+        for ds in sorted(late_out_by_date.keys())
+    ]
+
+    display_name = None
+    if late_in_rows and late_in_rows[0].employee_name:
+        display_name = late_in_rows[0].employee_name
+    elif late_out_rows and late_out_rows[0].employee_name:
+        display_name = late_out_rows[0].employee_name
+    if not display_name:
+        emp_lookup = db.query(EmployeeModel).filter(EmployeeModel.employee_id == emp_id).first()
+        if emp_lookup:
+            display_name = emp_lookup.name
+
+    status_in = Counter((r.status or '') for r in late_in_rows)
+    status_out = Counter((r.status or '') for r in late_out_rows)
+
+    return {
+        'month': month,
+        'employee_id': emp_id,
+        'employee_name': display_name,
+        'summary': {
+            'late_login_events': len(late_in_rows),
+            'late_logout_events': len(late_out_rows),
+            'total_minutes_late_in': sum(int(r.minutes_late or 0) for r in late_in_rows),
+            'total_minutes_late_out': sum(int(r.minutes_late or 0) for r in late_out_rows),
+            'pending_late_in': int(status_in.get('Pending', 0)),
+            'pending_late_out': int(status_out.get('Pending', 0)),
+        },
+        'late_logins': late_logins,
+        'late_logouts': late_logouts,
+        'reason_breakdown': reason_breakdown,
+        'late_in_minutes_by_date': late_in_minutes_by_date,
+        'late_out_minutes_by_date': late_out_minutes_by_date,
     }
 
 
