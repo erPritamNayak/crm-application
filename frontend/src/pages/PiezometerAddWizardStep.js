@@ -78,10 +78,10 @@ function PiezometerAddWizardStep({
           const patchBundle = (patch) =>
             setPiezometerFiles((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
           return (
-            <Card key={idx} className="p-4 border border-gray-200 space-y-4">
+            <Card key={idx} className="p-4 border border-gray-200 bg-white shadow-none rounded-lg space-y-4">
               <p className="text-sm font-semibold text-gray-800">Piezometer {idx + 1}</p>
 
-              <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-3">
+              <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-3">
                 <p className="text-sm font-semibold text-gray-800">Piezometer</p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-2">
@@ -115,7 +115,7 @@ function PiezometerAddWizardStep({
                   imageOnly
                   files={bundle.bwPhotos}
                   onChange={(bwPhotos) => patchBundle({ bwPhotos })}
-                  hint="Multiple images; uploads after save (S3)."
+                  hint="Click + to add photos. Uploads after save (S3)."
                   className="border-t border-gray-200 pt-3"
                 />
               </div>
@@ -165,7 +165,7 @@ function PiezometerAddWizardStep({
               </div>
 
               {row.telemetry_applicable === 'yes' ? (
-                <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-4">
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-4">
                   <p className="text-sm font-semibold text-gray-800">Telemetry system</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-2">
@@ -290,8 +290,7 @@ function PiezometerAddWizardStep({
                     imageOnly
                     files={bundle.telemetryPhotos}
                     onChange={(telemetryPhotos) => patchBundle({ telemetryPhotos })}
-                    hint="Multiple images; uploads after save (S3)."
-                    className="rounded-md border border-gray-200 bg-white p-3"
+                    hint="Click + to add telemetry photos."
                   />
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -358,7 +357,7 @@ function PiezometerAddWizardStep({
                   </div>
 
                   {row.telemetry_uploaded_previous_year === 'yes' ? (
-                    <div className="rounded-md border border-gray-200 bg-gray-50/80 p-3 space-y-3">
+                    <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
                       <div className="space-y-2">
                         <Label className="text-sm font-medium text-gray-700">Telemetry serial number</Label>
                         <select

@@ -2507,7 +2507,7 @@ const CGWFlowMetre = () => {
 
                 {addStep === 3 && (
                   <div className="space-y-4">
-                    <div className="space-y-3">
+                    <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <Label className="text-sm font-medium text-gray-700">Flow metre lines</Label>
@@ -2516,7 +2516,7 @@ const CGWFlowMetre = () => {
                         <Button
                           type="button"
                           variant="outline"
-                          className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                          className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white"
                           onClick={() => {
                             setEquipmentRows((prev) => [...prev, { ...EMPTY_EQUIPMENT_ROW }]);
                             setEquipmentFlowFiles((prev) => [...prev, EMPTY_EQUIPMENT_FLOW_FILES()]);
@@ -2526,7 +2526,7 @@ const CGWFlowMetre = () => {
                           Add Row
                         </Button>
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         {equipmentRows.map((row, idx) => {
                           const patchRow = (patch) =>
                             setEquipmentRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -2536,10 +2536,10 @@ const CGWFlowMetre = () => {
                               prev.map((b, i) => (i === idx ? { ...b, ...patch } : b))
                             );
                           return (
-                            <Card key={idx} className="p-4 border border-gray-200">
+                            <Card key={idx} className="p-4 border border-gray-200 bg-white shadow-none rounded-lg">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="flex-1 min-w-0 space-y-4">
-                                  <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-3">
+                                  <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-3">
                                     <p className="text-sm font-semibold text-gray-800">Flow metre details</p>
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                       <div className="space-y-2">
@@ -2574,12 +2574,12 @@ const CGWFlowMetre = () => {
                                       imageOnly
                                       files={flowFiles.bwGeoPhotos}
                                       onChange={(bwGeoPhotos) => patchFlowFiles({ bwGeoPhotos })}
-                                      hint="Multiple images; uploads after save (S3)."
+                                      hint="Click + to add GEO photos. Uploads after save (S3)."
                                       className="border-t border-gray-200 pt-3"
                                     />
                                   </div>
 
-                                  <div className="rounded-lg border border-gray-200 p-3 space-y-3">
+                                  <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-3">
                                     <p className="text-sm font-semibold text-gray-800">Calibration certificate</p>
                                     <CgwMultiFilePicker
                                       label="Certificate (file)"
@@ -2610,7 +2610,7 @@ const CGWFlowMetre = () => {
                                     </div>
                                   </div>
 
-                                  <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                                  <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
                                     <p className="text-sm font-semibold text-gray-800">Service report</p>
                                     <CgwMultiFilePicker
                                       label="Upload service report"
@@ -2635,7 +2635,7 @@ const CGWFlowMetre = () => {
                                   </div>
 
                                   {row.telemetry_applicable === 'yes' ? (
-                                    <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3 space-y-4">
+                                    <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-4">
                                       <p className="text-sm font-semibold text-gray-800">Telemetry system</p>
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         <div className="space-y-2">
@@ -2760,8 +2760,7 @@ const CGWFlowMetre = () => {
                                         imageOnly
                                         files={flowFiles.telemetryPhotoFiles}
                                         onChange={(telemetryPhotoFiles) => patchFlowFiles({ telemetryPhotoFiles })}
-                                        hint="Multiple images; uploads after save (S3)."
-                                        className="rounded-md border border-gray-200 bg-white p-3"
+                                        hint="Click + to add telemetry photos. Uploads after save (S3)."
                                       />
 
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2828,7 +2827,7 @@ const CGWFlowMetre = () => {
                                       </div>
 
                                       {row.telemetry_uploaded_previous_year === 'yes' ? (
-                                        <div className="rounded-md border border-gray-200 bg-gray-50/80 p-3 space-y-3">
+                                        <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
                                           <div className="space-y-2">
                                             <Label className="text-sm font-medium text-gray-700">Prior telemetry serial number</Label>
                                             <select
@@ -2935,7 +2934,7 @@ const CGWFlowMetre = () => {
                 )}
 
                 {addStep === 4 && needsPiezometerWizardStep ? (
-                  <div className="rounded-lg border border-gray-200 bg-slate-50/40 p-4">
+                  <div className="rounded-lg border border-gray-200 bg-white p-4">
                     <PiezometerAddWizardStep
                       piezometerRows={piezometerRows}
                       setPiezometerRows={setPiezometerRows}
@@ -2948,8 +2947,8 @@ const CGWFlowMetre = () => {
                 ) : null}
 
                 {addStep === (needsPiezometerWizardStep ? 5 : 4) ? (
-                  <div className="space-y-3">
-                    <div className="rounded-lg border border-gray-200 p-3 space-y-3">
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
                       <p className="text-sm font-semibold text-gray-800">Additional attachment</p>
                       {equipmentRows.map((row, idx) => {
                         const flowFiles = equipmentFlowFiles[idx] || {};
@@ -2962,7 +2961,7 @@ const CGWFlowMetre = () => {
                         const docAccept =
                           '.pdf,.jpg,.jpeg,.png,.webp,.gif,.xlsx,.xls,.csv,application/pdf,image/*,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv';
                         return (
-                          <div key={`add-attach-${idx}`} className="rounded-md border border-gray-200 bg-gray-50/60 p-3 space-y-3">
+                          <div key={`add-attach-${idx}`} className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
                             <p className="text-xs font-semibold text-gray-700">Flow metre line {idx + 1}</p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               <CgwMultiFilePicker
