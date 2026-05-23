@@ -737,6 +737,7 @@ class CGWFlowMetreModel(Base):
     noc_nocap_password = Column(String(255), nullable=True)
     # JSON: {"flow_meter":[{id,file_name,url}], "telemetry":[...], ...}
     cgw_attachments_json = Column(Text, nullable=True)
+    wizard_draft_json = Column(Text, nullable=True)
     created_by_name = Column(String(255), nullable=True)
     last_modified_by_name = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -1437,6 +1438,25 @@ def migrate_cgw_flow_metres_model_columns():
 
 
 migrate_cgw_flow_metres_model_columns()
+
+
+def migrate_cgw_flow_metres_wizard_draft_json():
+    """Add wizard_draft_json to cgw_flow_metres if missing."""
+    from sqlalchemy import text, inspect
+    try:
+        insp = inspect(engine)
+        existing = {c['name'] for c in insp.get_columns('cgw_flow_metres')}
+        if 'wizard_draft_json' in existing:
+            return
+        ddl = 'LONGTEXT NULL' if DATABASE_URL.startswith('mysql') else 'TEXT NULL'
+        with engine.begin() as conn:
+            conn.execute(text(f'ALTER TABLE cgw_flow_metres ADD COLUMN wizard_draft_json {ddl}'))
+        print('Added column wizard_draft_json to cgw_flow_metres')
+    except Exception as e:
+        print(f'Migration error for cgw_flow_metres wizard_draft_json: {e}')
+
+
+migrate_cgw_flow_metres_wizard_draft_json()
 
 # Seed default roles (Admin cannot be edited/deleted; others can)
 DEFAULT_PERMISSION_KEYS = [
@@ -2518,6 +2538,7 @@ class CGWFlowMetre(BaseModel):
     noc_nocap_user_id: Optional[str] = None
     noc_nocap_password: Optional[str] = None
     cgw_attachments: Optional[Dict[str, List[CgwFileAttachment]]] = None
+    wizard_draft_json: Optional[str] = None
     created_by_name: Optional[str] = None
     last_modified_by_name: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -2622,7 +2643,17 @@ class CGWFlowMetreBulkCreate(BaseModel):
     remarks: Optional[str] = None
     equipments: List[CGWFlowMetreEquipmentLine] = Field(default_factory=list)
 
+class CGWFlowMetreDraftSave(BaseModel):
+    """Persist in-progress wizard state (status remains Draft on the row)."""
+    wizard: Dict[str, Any]
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
+
+
 class CGWFlowMetreUpdate(BaseModel):
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    wizard_draft_json: Optional[str] = None
     location: Optional[str] = None
     contact_person: Optional[str] = None
     equipment_name: Optional[str] = None
@@ -3790,6 +3821,7 @@ def get_cgw_flow_metres(current_user: UserModel = Depends(get_current_user), db:
         migrate_cgw_flow_metres_telemetry_portal_columns()
         migrate_cgw_flow_metres_audit_columns()
         migrate_cgw_flow_metres_model_columns()
+        migrate_cgw_flow_metres_wizard_draft_json()
         try:
             items = db.query(CGWFlowMetreModel).all()
         except OperationalError:
@@ -3852,6 +3884,128 @@ def update_cgw_flow_metre(inventory_id: str, data: CGWFlowMetreUpdate, current_u
     db.commit()
     db.refresh(item)
 
+    _hydrate_cgw_flow_metre_attachments(item)
+    return item
+
+
+def _cgw_apply_draft_wizard_to_row(item: CGWFlowMetreModel, data: CGWFlowMetreDraftSave) -> None:
+    """Mirror key wizard fields onto the draft inventory row."""
+    item.wizard_draft_json = json.dumps(data.wizard)
+    if data.customer_id is not None:
+        item.customer_id = data.customer_id or item.customer_id
+    if data.customer_name is not None:
+        item.customer_name = data.customer_name or item.customer_name
+    wiz = data.wizard if isinstance(data.wizard, dict) else {}
+    form = wiz.get('formData') if isinstance(wiz.get('formData'), dict) else {}
+    for key in (
+        'location', 'contact_person', 'system_mobile_number', 'person_mobile_number',
+        'email_id', 'date_of_commissioning', 'url_link', 'user_id', 'password',
+        'renewal_date', 'review', 'remarks',
+    ):
+        if key in form and form[key] is not None:
+            setattr(item, key, form[key] or None)
+    eq_rows = wiz.get('equipmentRows')
+    if isinstance(eq_rows, list) and eq_rows:
+        eq0 = eq_rows[0] if isinstance(eq_rows[0], dict) else {}
+        for key in (
+            'equipment_name', 'flowmeter_details', 'product_code', 'model_no',
+            'flow_meter_make', 'flow_meter_size', 'flow_meter_serial',
+            'calibration_valid_from', 'calibration_valid_to',
+            'telemetry_applicable', 'telemetry_company', 'telemetry_company_other',
+            'telemetry_communication_via', 'telemetry_sim_provider', 'telemetry_sim_provider_other',
+            'telemetry_sim_number', 'telemetry_sim_valid_from', 'telemetry_sim_valid_to',
+            'telemetry_product_code', 'telemetry_serial_number', 'telemetry_portal_url',
+            'telemetry_username', 'telemetry_password', 'telemetry_valid_from', 'telemetry_valid_to',
+            'telemetry_uploaded_previous_year', 'telemetry_previous_serial',
+            'telemetry_previous_data_available', 'telemetry_previous_data_from', 'telemetry_previous_data_to',
+        ):
+            if key in eq0:
+                val = eq0.get(key)
+                setattr(item, key, val if val != '' else None)
+        if 'telemetry_previous_serial' in eq0 and eq0.get('telemetry_previous_serial'):
+            item.telemetry_previous_serial = eq0.get('telemetry_previous_serial')
+    noc = wiz.get('addNocForm') if isinstance(wiz.get('addNocForm'), dict) else {}
+    noc_map = {
+        'project_name': 'noc_project_name',
+        'project_address': 'noc_project_address',
+        'communication_address': 'noc_communication_address',
+        'noc_no': 'noc_no',
+        'application_no': 'noc_application_no',
+        'project_status': 'noc_project_status',
+        'noc_type': 'noc_type',
+        'valid_from': 'noc_valid_from',
+        'valid_upto': 'noc_valid_upto',
+        'permitted_m3_per_day': 'noc_permitted_m3_per_day',
+        'permitted_m3_per_year': 'noc_permitted_m3_per_year',
+        'existing_bw_count': 'noc_existing_bw_count',
+        'total_proposed_bw_count': 'noc_total_proposed_bw_count',
+        'flowmeter_applicable': 'noc_flowmeter_applicable',
+        'flowmeter_count': 'noc_flowmeter_count',
+        'piezometer_applicable': 'noc_piezometer_applicable',
+        'piezometer_count': 'noc_piezometer_count',
+        'bhuneer_user_id': 'noc_bhuneer_user_id',
+        'bhuneer_password': 'noc_bhuneer_password',
+        'nocap_user_id': 'noc_nocap_user_id',
+        'nocap_password': 'noc_nocap_password',
+    }
+    for src, dest in noc_map.items():
+        if src in noc:
+            setattr(item, dest, noc.get(src) or None)
+    pz_rows = wiz.get('piezometerRows')
+    if isinstance(pz_rows, list) and pz_rows:
+        item.piezometer_details_json = json.dumps({
+            'schema_version': 2,
+            'piezometers': pz_rows,
+        })
+
+
+@api_router.post('/cgw-flow-metres/draft', response_model=CGWFlowMetre)
+def create_cgw_flow_metre_draft(
+    data: CGWFlowMetreDraftSave,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_manage_cgw(current_user, db):
+        raise HTTPException(status_code=403, detail='Not authorized')
+    cust_id = (data.customer_id or '').strip()
+    cust_name = (data.customer_name or '').strip()
+    if not cust_id:
+        raise HTTPException(status_code=400, detail='Customer is required to save a draft')
+    inv_id = f'DRAFT-{uuid.uuid4().hex[:8].upper()}'
+    item = CGWFlowMetreModel(
+        inventory_id=inv_id,
+        customer_id=cust_id,
+        customer_name=cust_name or 'Draft',
+        status='Draft',
+        created_by_name=current_user.name,
+        last_modified_by_name=current_user.name,
+    )
+    _cgw_apply_draft_wizard_to_row(item, data)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    _hydrate_cgw_flow_metre_attachments(item)
+    return item
+
+
+@api_router.put('/cgw-flow-metres/{inventory_id}/draft', response_model=CGWFlowMetre)
+def save_cgw_flow_metre_draft(
+    inventory_id: str,
+    data: CGWFlowMetreDraftSave,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_manage_cgw(current_user, db):
+        raise HTTPException(status_code=403, detail='Not authorized')
+    item = db.query(CGWFlowMetreModel).filter(CGWFlowMetreModel.id == inventory_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail='Inventory item not found')
+    _cgw_apply_draft_wizard_to_row(item, data)
+    item.status = 'Draft'
+    item.last_modified_by_name = current_user.name
+    item.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(item)
     _hydrate_cgw_flow_metre_attachments(item)
     return item
 

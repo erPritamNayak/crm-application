@@ -7,8 +7,9 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Plus, Minus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Eye, Upload, Download, History } from 'lucide-react';
+import { Plus, Minus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Eye, Upload, Download, History, Save } from 'lucide-react';
 import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
+import { getApiErrorMessage } from '@/lib/apiErrors';
 import { cn } from '@/lib/utils';
 import PiezometerAddWizardStep, {
   EMPTY_PIEZO_ROW,
@@ -231,6 +232,136 @@ const EMPTY_EQUIPMENT_FLOW_FILES = () => ({
   rain_water_harvesting_data: [],
   additional_doc: [],
 });
+
+/** Map wizard pending-file bundle keys → API attachment category keys. */
+const FLOW_BUNDLE_TO_API_CATEGORY = {
+  bwGeoPhotos: 'bw_geo_flowmeter',
+  calibration_cert: 'calibration_certificate',
+  service_report: 'service_report',
+  telemetryPhotoFiles: 'telemetry',
+  telemetry_excel: 'telemetry_excel_prior',
+  telemetry_service: 'telemetry_service_prior',
+  water_quality_certificate: 'water_quality_certificate',
+  cte: 'cte',
+  cto: 'cto',
+  rwss_watco_phed_noc: 'rwss_watco_phed_noc',
+  approval_letter: 'approval_letter',
+  rain_water_harvesting_data: 'rain_water_harvesting_data',
+  additional_doc: 'additional_doc',
+};
+
+const PIEZO_BUNDLE_TO_API_CATEGORY = {
+  bwPhotos: 'piezometer_bw',
+  calibrationCert: 'piezometer_calibration',
+  telemetryPhotos: 'piezometer_telemetry',
+  telemetryExcel: 'piezometer_excel_prior',
+  priorTelemetryService: 'piezometer_service_report',
+};
+
+const WIZARD_DRAFT_VERSION = 1;
+
+function buildWizardSnapshot({
+  addStep,
+  formData,
+  equipmentRows,
+  addNocForm,
+  piezometerRows,
+}) {
+  return {
+    version: WIZARD_DRAFT_VERSION,
+    addStep,
+    formData,
+    equipmentRows,
+    addNocForm,
+    piezometerRows,
+  };
+}
+
+function equipmentRowFromItem(item) {
+  const prevSerial = (item?.telemetry_previous_serial || '').trim();
+  return {
+    ...EMPTY_EQUIPMENT_ROW,
+    equipment_name: item?.equipment_name || '',
+    flowmeter_details: item?.flowmeter_details || '',
+    product_code: item?.product_code || '',
+    model_no: item?.model_no || '',
+    flow_meter_make: item?.flow_meter_make || 'UPC',
+    flow_meter_size: item?.flow_meter_size || '',
+    flow_meter_serial: item?.flow_meter_serial || '',
+    calibration_valid_from: item?.calibration_valid_from || '',
+    calibration_valid_to: item?.calibration_valid_to || '',
+    telemetry_applicable: item?.telemetry_applicable || '',
+    telemetry_company: item?.telemetry_company || '',
+    telemetry_company_other: item?.telemetry_company_other || '',
+    telemetry_communication_via: item?.telemetry_communication_via || '',
+    telemetry_sim_provider: item?.telemetry_sim_provider || '',
+    telemetry_sim_provider_other: item?.telemetry_sim_provider_other || '',
+    telemetry_sim_number: item?.telemetry_sim_number || '',
+    telemetry_sim_valid_from: item?.telemetry_sim_valid_from || '',
+    telemetry_sim_valid_to: item?.telemetry_sim_valid_to || '',
+    telemetry_product_code: item?.telemetry_product_code || '',
+    telemetry_serial_number: item?.telemetry_serial_number || '',
+    telemetry_portal_url: item?.telemetry_portal_url || '',
+    telemetry_username: item?.telemetry_username || '',
+    telemetry_password: item?.telemetry_password || '',
+    telemetry_valid_from: item?.telemetry_valid_from || '',
+    telemetry_valid_to: item?.telemetry_valid_to || '',
+    telemetry_uploaded_previous_year: item?.telemetry_uploaded_previous_year || '',
+    telemetry_previous_serial_pick: prevSerial,
+    telemetry_previous_serial_free: '',
+    telemetry_previous_data_available: item?.telemetry_previous_data_available || '',
+    telemetry_previous_data_from: item?.telemetry_previous_data_from || '',
+    telemetry_previous_data_to: item?.telemetry_previous_data_to || '',
+    additional_document_type: item?.additional_document_type || '',
+  };
+}
+
+function formDataFromItem(item) {
+  return {
+    ...EMPTY_FORM,
+    customer_id: item?.customer_id || '',
+    customer_name: item?.customer_name || '',
+    location: item?.location || '',
+    contact_person: item?.contact_person || '',
+    system_mobile_number: item?.system_mobile_number || '',
+    person_mobile_number: item?.person_mobile_number || '',
+    email_id: item?.email_id || '',
+    date_of_commissioning: item?.date_of_commissioning || '',
+    url_link: item?.url_link || '',
+    user_id: item?.user_id || '',
+    password: item?.password || '',
+    status: item?.status || 'Active',
+    renewal_date: item?.renewal_date || '',
+    review: item?.review || '',
+    remarks: item?.remarks || '',
+  };
+}
+
+function nocFormFromItem(item) {
+  return {
+    bhuneer_user_id: item?.noc_bhuneer_user_id || '',
+    bhuneer_password: item?.noc_bhuneer_password || '',
+    nocap_user_id: item?.noc_nocap_user_id || '',
+    nocap_password: item?.noc_nocap_password || '',
+    project_name: item?.noc_project_name || '',
+    project_address: item?.noc_project_address || '',
+    communication_address: item?.noc_communication_address || '',
+    noc_no: item?.noc_no || '',
+    application_no: item?.noc_application_no || '',
+    project_status: item?.noc_project_status || '',
+    noc_type: item?.noc_type || '',
+    valid_from: item?.noc_valid_from || '',
+    valid_upto: item?.noc_valid_upto || '',
+    permitted_m3_per_day: item?.noc_permitted_m3_per_day || '',
+    permitted_m3_per_year: item?.noc_permitted_m3_per_year || '',
+    existing_bw_count: item?.noc_existing_bw_count || '',
+    total_proposed_bw_count: item?.noc_total_proposed_bw_count || '',
+    flowmeter_applicable: item?.noc_flowmeter_applicable || '',
+    flowmeter_count: item?.noc_flowmeter_count || '',
+    piezometer_applicable: item?.noc_piezometer_applicable || '',
+    piezometer_count: item?.noc_piezometer_count || '',
+  };
+}
 
 const EMPTY_NOC_FORM = {
   bhuneer_user_id: '',
@@ -569,6 +700,8 @@ const CGWFlowMetre = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
+  const [editingItem, setEditingItem] = useState(null);
+  const [draftSaving, setDraftSaving] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [equipmentRows, setEquipmentRows] = useState([EMPTY_EQUIPMENT_ROW]);
   /** Per equipment row index: optional files uploaded after inventory row exists (S3). */
@@ -778,7 +911,7 @@ const CGWFlowMetre = () => {
       closeNocDialog();
       fetchItems();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to save NOC');
+      toast.error(getApiErrorMessage(err, 'Failed to save NOC'));
     } finally {
       setNocSaving(false);
     }
@@ -902,7 +1035,7 @@ const CGWFlowMetre = () => {
         setNocRemotePreviewUrl(u);
       } catch (err) {
         if (!cancelled) {
-          toast.error(err.response?.data?.detail || 'Could not load NOC preview');
+          toast.error(getApiErrorMessage(err, 'Could not load NOC preview'));
         }
       } finally {
         if (!cancelled) setNocRemotePreviewLoading(false);
@@ -1119,20 +1252,13 @@ const CGWFlowMetre = () => {
   const uploadCgwRowAttachments = async (inventoryRowId, category, fileList) => {
     const list = normalizeFileList(fileList);
     if (!list.length) return;
-    const prepared = [];
-    for (const f of list) {
-      prepared.push(await prepareFileForUpload(f));
+    for (const raw of list) {
+      const prepared = await prepareFileForUpload(raw);
+      const fd = new FormData();
+      fd.append('category', category);
+      fd.append('file', prepared);
+      await postCgwMediaFormData(inventoryRowId, fd);
     }
-    const fd = new FormData();
-    fd.append('category', category);
-    if (prepared.length === 1) {
-      fd.append('file', prepared[0]);
-    } else {
-      for (const f of prepared) {
-        fd.append('files', f);
-      }
-    }
-    await postCgwMediaFormData(inventoryRowId, fd);
   };
 
   const uploadCgwRowAttachment = async (inventoryRowId, category, file) =>
@@ -1174,6 +1300,101 @@ const CGWFlowMetre = () => {
     await uploadCgwRowAttachments(inventoryRowId, 'piezometer_service_report', bundle.priorTelemetryService);
   };
 
+  const isDraftRecord = (item) => String(item?.status || '').toLowerCase() === 'draft';
+
+  const getSavedAttachments = (apiCategory) => {
+    if (!editingItem?.cgw_attachments || !apiCategory) return [];
+    return editingItem.cgw_attachments[apiCategory] || [];
+  };
+
+  const populateWizardFromItem = (item, snapshot = null) => {
+    const snap = snapshot && typeof snapshot === 'object' ? snapshot : null;
+    setFormData(snap?.formData ? { ...EMPTY_FORM, ...snap.formData } : formDataFromItem(item));
+    setAddNocForm(snap?.addNocForm ? { ...EMPTY_NOC_FORM, ...snap.addNocForm } : nocFormFromItem(item));
+    const eqRows = snap?.equipmentRows?.length
+      ? snap.equipmentRows.map((r) => ({ ...EMPTY_EQUIPMENT_ROW, ...r }))
+      : [equipmentRowFromItem(item)];
+    setEquipmentRows(eqRows);
+    setEquipmentFlowFiles(eqRows.map(() => EMPTY_EQUIPMENT_FLOW_FILES()));
+    let pz = [];
+    if (snap?.piezometerRows?.length) {
+      pz = snap.piezometerRows.map((r) => ({ ...EMPTY_PIEZO_ROW, ...r }));
+    } else {
+      try {
+        const parsed = typeof item.piezometer_details_json === 'string'
+          ? JSON.parse(item.piezometer_details_json)
+          : item.piezometer_details_json;
+        pz = Array.isArray(parsed?.piezometers)
+          ? parsed.piezometers.map((r) => ({ ...EMPTY_PIEZO_ROW, ...r }))
+          : [];
+      } catch (_e) {
+        pz = [];
+      }
+    }
+    setPiezometerRows(pz);
+    setPiezometerFiles(Array.from({ length: pz.length }, () => EMPTY_PIEZO_FILES()));
+    setAddStep(Math.min(Math.max(Number(snap?.addStep) || 1, 1), addWizardFinalStep));
+    setAddNocFile(null);
+    setAddNocPdfObjectUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+    if (item?.noc_document_url) {
+      setAddNocPdfPreviewVisible(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!(formData.customer_id || '').trim()) {
+      toast.error('Select a customer before saving a draft.');
+      return;
+    }
+    setDraftSaving(true);
+    try {
+      const wizard = buildWizardSnapshot({
+        addStep,
+        formData,
+        equipmentRows,
+        addNocForm,
+        piezometerRows,
+      });
+      const body = {
+        wizard,
+        customer_id: formData.customer_id,
+        customer_name: formData.customer_name || '',
+      };
+      let saved;
+      if (editingItemId) {
+        const res = await axios.put(`${API}/cgw-flow-metres/${editingItemId}/draft`, body, {
+          headers: authHeaders(),
+        });
+        saved = res.data;
+      } else {
+        const res = await axios.post(`${API}/cgw-flow-metres/draft`, body, { headers: authHeaders() });
+        saved = res.data;
+        setEditingItemId(saved.id);
+        setEditMode(true);
+      }
+      setEditingItem(saved);
+      if (saved?.id) {
+        for (let i = 0; i < equipmentRows.length; i += 1) {
+          await uploadEquipmentFlowBundle(saved.id, equipmentFlowFiles[i] || {}, equipmentRows[i]);
+        }
+        for (let pi = 0; pi < (piezometerFiles || []).length; pi += 1) {
+          await uploadPiezometerFlowBundle(saved.id, piezometerFiles[pi] || {});
+        }
+        const fresh = await axios.get(`${API}/cgw-flow-metres/${saved.id}`, { headers: authHeaders() });
+        setEditingItem(fresh.data);
+      }
+      toast.success('Draft saved. Open it from the grid to continue later.');
+      fetchItems();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to save draft'));
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     if (e?.preventDefault) e.preventDefault();
     if (addStep !== addWizardFinalStep) {
@@ -1182,10 +1403,17 @@ const CGWFlowMetre = () => {
     }
     if (!validateFlowMetreWizardStep()) return;
     if (!validatePiezometerWizardStep()) return;
+    if (!editMode && !(formData.customer_id || '').trim()) {
+      toast.error('Please select a customer before saving.');
+      return;
+    }
     if (addWizardSubmitting) return;
     setAddWizardSubmitting(true);
+    const submittingDraft = editMode && isDraftRecord(editingItem);
+    const draftIdToRemove = submittingDraft ? editingItemId : null;
+    const useSingleRowEdit = editMode && editingItemId && (!submittingDraft || equipmentRows.length <= 1);
     try {
-      if (editMode && editingItemId) {
+      if (useSingleRowEdit) {
         const row = equipmentRows[0] || { ...EMPTY_EQUIPMENT_ROW };
         const apiRow = equipmentRowToApiPayload(row);
         const piezometerDetailsPayload =
@@ -1232,6 +1460,7 @@ const CGWFlowMetre = () => {
           person_mobile_number: formData.person_mobile_number || '',
           email_id: formData.email_id || '',
           date_of_commissioning: formData.date_of_commissioning || null,
+          ...(submittingDraft ? { status: 'Active', wizard_draft_json: null } : {}),
         }, { headers: authHeaders() });
 
         const bundle = equipmentFlowFiles[0] || {};
@@ -1288,10 +1517,11 @@ const CGWFlowMetre = () => {
             noc_flowmeter_count: addNocForm.flowmeter_applicable === 'yes' ? (addNocForm.flowmeter_count || '') : '',
             noc_piezometer_applicable: addNocForm.piezometer_applicable || '',
             noc_piezometer_count: addNocForm.piezometer_applicable === 'yes' ? String(piezometerWizardCount || addNocForm.piezometer_count || '') : '',
+            ...(submittingDraft ? { status: 'Active', wizard_draft_json: null } : {}),
           }, { headers: authHeaders() });
         }
 
-        toast.success('Inventory item updated successfully');
+        toast.success(submittingDraft ? 'Draft submitted successfully' : 'Inventory item updated successfully');
         setDialogOpen(false);
         resetForm();
         fetchItems();
@@ -1426,7 +1656,21 @@ const CGWFlowMetre = () => {
       }
 
       const payload = {
-        ...base,
+        customer_id: formData.customer_id,
+        customer_name: formData.customer_name || '',
+        location: base.location || null,
+        contact_person: base.contact_person || null,
+        system_mobile_number: base.system_mobile_number || null,
+        person_mobile_number: base.person_mobile_number || null,
+        email_id: base.email_id || null,
+        date_of_commissioning: base.date_of_commissioning || null,
+        url_link: base.url_link || null,
+        user_id: base.user_id || null,
+        password: base.password || null,
+        status: base.status || 'Active',
+        renewal_date: base.renewal_date || null,
+        review: base.review || null,
+        remarks: base.remarks || null,
         equipments: rowsForSubmit.map((x) => x.row),
       };
 
@@ -1443,7 +1687,7 @@ const CGWFlowMetre = () => {
         try {
           await uploadEquipmentFlowBundle(inv.id, bundle, equipmentRows[i]);
         } catch (uploadErr) {
-          toast.error(uploadErr.response?.data?.detail || 'Saved row but an attachment upload failed');
+          toast.error(getApiErrorMessage(uploadErr, 'Saved row but an attachment upload failed'));
           fetchItems();
           return;
         }
@@ -1457,7 +1701,7 @@ const CGWFlowMetre = () => {
           try {
             await uploadPiezometerFlowBundle(inv.id, pb);
           } catch (pzErr) {
-            toast.error(pzErr.response?.data?.detail || 'Piezometer file upload failed');
+            toast.error(getApiErrorMessage(pzErr, 'Piezometer file upload failed'));
             fetchItems();
             return;
           }
@@ -1561,12 +1805,22 @@ const CGWFlowMetre = () => {
         }
       }
 
-      toast.success('Inventory items added successfully');
+      if (draftIdToRemove) {
+        try {
+          await axios.delete(`${API}/cgw-flow-metres/${draftIdToRemove}`, {
+            headers: authHeaders(),
+          });
+        } catch (_delErr) {
+          /* rows created; draft row may remain — user can delete manually */
+        }
+      }
+
+      toast.success(submittingDraft ? 'Draft submitted successfully' : 'Inventory items added successfully');
       setDialogOpen(false);
       resetForm();
       fetchItems();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Operation failed');
+      toast.error(getApiErrorMessage(error, 'Operation failed'));
     } finally {
       setAddWizardSubmitting(false);
     }
@@ -1615,84 +1869,26 @@ const CGWFlowMetre = () => {
     setHistoryDialogOpen(true);
   };
 
-  const handleEdit = (item) => {
+  const handleEdit = async (item) => {
     setEditMode(true);
     setEditingItemId(item.id);
-    setFormData((prev) => ({
-      ...prev,
-      customer_id: item.customer_id || '',
-      customer_name: item.customer_name || '',
-      location: item.location || '',
-      contact_person: item.contact_person || '',
-      system_mobile_number: item.system_mobile_number || '',
-      person_mobile_number: item.person_mobile_number || '',
-      email_id: item.email_id || '',
-      date_of_commissioning: item.date_of_commissioning || '',
-    }));
-    setEquipmentRows([{
-      ...EMPTY_EQUIPMENT_ROW,
-      flow_meter_make: item.flow_meter_make || 'UPC',
-      flow_meter_size: item.flow_meter_size || '',
-      flow_meter_serial: item.flow_meter_serial || '',
-      calibration_valid_from: item.calibration_valid_from || '',
-      calibration_valid_to: item.calibration_valid_to || '',
-      telemetry_applicable: item.telemetry_applicable || '',
-      telemetry_company: item.telemetry_company || '',
-      telemetry_company_other: item.telemetry_company_other || '',
-      telemetry_communication_via: item.telemetry_communication_via || '',
-      telemetry_sim_provider: item.telemetry_sim_provider || '',
-      telemetry_sim_provider_other: item.telemetry_sim_provider_other || '',
-      telemetry_sim_number: item.telemetry_sim_number || '',
-      telemetry_sim_valid_from: item.telemetry_sim_valid_from || '',
-      telemetry_sim_valid_to: item.telemetry_sim_valid_to || '',
-      telemetry_product_code: item.telemetry_product_code || '',
-      telemetry_serial_number: item.telemetry_serial_number || '',
-      telemetry_portal_url: item.telemetry_portal_url || '',
-      telemetry_username: item.telemetry_username || '',
-      telemetry_password: item.telemetry_password || '',
-      telemetry_valid_from: item.telemetry_valid_from || '',
-      telemetry_valid_to: item.telemetry_valid_to || '',
-      telemetry_uploaded_previous_year: item.telemetry_uploaded_previous_year || '',
-      telemetry_previous_serial_pick: item.telemetry_previous_serial || '',
-      telemetry_previous_data_available: item.telemetry_previous_data_available || '',
-      telemetry_previous_data_from: item.telemetry_previous_data_from || '',
-      telemetry_previous_data_to: item.telemetry_previous_data_to || '',
-      additional_document_type: item.additional_document_type || '',
-    }]);
-    setEquipmentFlowFiles([EMPTY_EQUIPMENT_FLOW_FILES()]);
-    setAddNocForm({
-      bhuneer_user_id: item.noc_bhuneer_user_id || '',
-      bhuneer_password: item.noc_bhuneer_password || '',
-      nocap_user_id: item.noc_nocap_user_id || '',
-      nocap_password: item.noc_nocap_password || '',
-      project_name: item.noc_project_name || '',
-      project_address: item.noc_project_address || '',
-      communication_address: item.noc_communication_address || '',
-      noc_no: item.noc_no || '',
-      application_no: item.noc_application_no || '',
-      project_status: item.noc_project_status || '',
-      noc_type: item.noc_type || '',
-      valid_from: item.noc_valid_from || '',
-      valid_upto: item.noc_valid_upto || '',
-      permitted_m3_per_day: item.noc_permitted_m3_per_day || '',
-      permitted_m3_per_year: item.noc_permitted_m3_per_year || '',
-      existing_bw_count: item.noc_existing_bw_count || '',
-      total_proposed_bw_count: item.noc_total_proposed_bw_count || '',
-      flowmeter_applicable: item.noc_flowmeter_applicable || '',
-      flowmeter_count: item.noc_flowmeter_count || '',
-      piezometer_applicable: item.noc_piezometer_applicable || '',
-      piezometer_count: item.noc_piezometer_count || '',
-    });
+    let full = item;
     try {
-      const parsed = typeof item.piezometer_details_json === 'string' ? JSON.parse(item.piezometer_details_json) : item.piezometer_details_json;
-      const pz = Array.isArray(parsed?.piezometers) ? parsed.piezometers : [];
-      setPiezometerRows(pz.map((r) => ({ ...EMPTY_PIEZO_ROW, ...r })));
-      setPiezometerFiles(Array.from({ length: pz.length }, () => EMPTY_PIEZO_FILES()));
+      const res = await axios.get(`${API}/cgw-flow-metres/${item.id}`, { headers: authHeaders() });
+      full = res.data;
     } catch (_e) {
-      setPiezometerRows([]);
-      setPiezometerFiles([]);
+      /* use list row */
     }
-    setAddStep(1);
+    setEditingItem(full);
+    let snapshot = null;
+    if (full.wizard_draft_json) {
+      try {
+        snapshot = JSON.parse(full.wizard_draft_json);
+      } catch (_e) {
+        snapshot = null;
+      }
+    }
+    populateWizardFromItem(full, snapshot);
     setDialogOpen(true);
   };
 
@@ -1710,7 +1906,7 @@ const CGWFlowMetre = () => {
       setInlineEditData(EMPTY_FORM);
       fetchItems();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Update failed');
+      toast.error(getApiErrorMessage(error, 'Update failed'));
     }
   };
 
@@ -1736,6 +1932,7 @@ const CGWFlowMetre = () => {
     setAddWizardSubmitting(false);
     setEditMode(false);
     setEditingItemId(null);
+    setEditingItem(null);
   };
 
   const handleAddNocWizardFilePicked = (e) => {
@@ -1899,11 +2096,16 @@ const CGWFlowMetre = () => {
     });
   }, [mediaDialogOpen, mediaDialogItem, mediaActiveCategory]);
 
-  const openMediaDialog = (item, category = 'bw_geo_flowmeter') => {
+  const openMediaDialog = (item, category = 'bw_geo_flowmeter', selectedFileId = null) => {
     setMediaDialogItem(item);
     setMediaActiveCategory(CGW_MEDIA_KEYS.includes(category) ? category : 'bw_geo_flowmeter');
-    setMediaSelectedFileId(null);
+    setMediaSelectedFileId(selectedFileId);
     setMediaDialogOpen(true);
+  };
+
+  const handlePreviewSavedAttachment = (att, apiCategory) => {
+    if (!editingItem || !att) return;
+    openMediaDialog(editingItem, apiCategory || cgwFirstAttachmentCategory(editingItem), att.id);
   };
 
   const closeMediaDialog = () => {
@@ -1942,7 +2144,7 @@ const CGWFlowMetre = () => {
       setMediaDialogItem(res.data);
       fetchItems();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Upload failed');
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
     } finally {
       setMediaUploading(false);
     }
@@ -1961,7 +2163,7 @@ const CGWFlowMetre = () => {
       setMediaDialogItem(res.data);
       fetchItems();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Delete failed');
+      toast.error(getApiErrorMessage(err, 'Delete failed'));
     }
   };
 
@@ -2027,7 +2229,7 @@ const CGWFlowMetre = () => {
         setMediaPreviewObjectUrl(u);
       } catch (err) {
         if (!cancelled) {
-          setMediaPreviewError(err.response?.data?.detail || 'Could not load file preview');
+          setMediaPreviewError(getApiErrorMessage(err, 'Could not load file preview'));
         }
       } finally {
         if (!cancelled) setMediaPreviewLoading(false);
@@ -2065,7 +2267,7 @@ const CGWFlowMetre = () => {
       setDigestScheduleTz(res.data.schedule_timezone || '');
       toast.success('Renewal digest settings saved');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to save digest settings');
+      toast.error(getApiErrorMessage(error, 'Failed to save digest settings'));
     } finally {
       setDigestSaving(false);
     }
@@ -2082,7 +2284,7 @@ const CGWFlowMetre = () => {
         toast.error(msg);
       }
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to run digest job');
+      toast.error(getApiErrorMessage(error, 'Failed to run digest job'));
     }
   };
 
@@ -2191,9 +2393,19 @@ const CGWFlowMetre = () => {
             <DialogContent className="flex h-[min(96vh,100dvh)] max-h-[min(96vh,100dvh)] w-[min(1600px,98vw)] max-w-[min(1600px,98vw)] flex-col overflow-hidden bg-white rounded-lg border border-gray-200 shadow-xl p-0">
               <div className="bg-blue-600 text-white p-6 rounded-t-lg shrink-0">
                 <DialogHeader>
-                  <DialogTitle className="text-xl font-bold text-white">{editMode ? 'Edit Flow Metre' : 'Add New Flow Metre'}</DialogTitle>
+                  <DialogTitle className="text-xl font-bold text-white">
+                    {editMode && isDraftRecord(editingItem)
+                      ? 'Continue draft'
+                      : editMode
+                        ? 'Edit Flow Metre'
+                        : 'Add New Flow Metre'}
+                  </DialogTitle>
                   <p className="text-blue-100 text-sm mt-1">
-                    {editMode ? 'Update existing inventory item' : 'Create a new inventory item'}
+                    {editMode && isDraftRecord(editingItem)
+                      ? 'Resume your saved draft — submit when ready'
+                      : editMode
+                        ? 'View or update all details and attachments'
+                        : 'Create a new inventory item'}
                   </p>
                 </DialogHeader>
               </div>
@@ -2260,6 +2472,31 @@ const CGWFlowMetre = () => {
                         <Label className="text-sm font-medium text-gray-700">Email</Label>
                         <Input type="email" value={formData.email_id} onChange={(e) => setFormData({ ...formData, email_id: e.target.value })} className="border border-gray-300 h-11" />
                       </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium text-gray-700">Status</Label>
+                        <select
+                          value={formData.status}
+                          onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                          className="w-full border border-gray-300 rounded-lg px-3 h-11"
+                        >
+                          <option value="Active">Active</option>
+                          <option value="Inactive">Inactive</option>
+                          <option value="Maintenance">Maintenance</option>
+                          <option value="Draft">Draft</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium text-gray-700">Renewal date</Label>
+                        <Input type="date" value={formData.renewal_date} onChange={(e) => setFormData({ ...formData, renewal_date: e.target.value })} className="border border-gray-300 h-11" />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <Label className="text-sm font-medium text-gray-700">Portal URL</Label>
+                        <Input type="url" value={formData.url_link} onChange={(e) => setFormData({ ...formData, url_link: e.target.value })} className="border border-gray-300 h-11" />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <Label className="text-sm font-medium text-gray-700">Remarks</Label>
+                        <Input value={formData.remarks} onChange={(e) => setFormData({ ...formData, remarks: e.target.value })} className="border border-gray-300 h-11" />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2321,6 +2558,23 @@ const CGWFlowMetre = () => {
                           </div>
                         ) : addNocFile ? (
                           <p className="text-[11px] text-amber-700 pt-1">Preparing preview…</p>
+                        ) : editMode && editingItem?.noc_document_url ? (
+                          <div className="rounded-md border border-gray-200 bg-white p-3 space-y-2">
+                            <p className="text-xs text-gray-600">Saved NOC document on this record</p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs"
+                              onClick={() => {
+                                const href = mediaPreviewHref(editingItem.noc_document_url);
+                                if (href) window.open(href, '_blank', 'noopener,noreferrer');
+                              }}
+                            >
+                              <Eye className="h-3.5 w-3.5 mr-1" />
+                              View saved NOC
+                            </Button>
+                          </div>
                         ) : null}
                       </div>
                       <div className="min-w-0 w-full shrink-0 space-y-4 lg:w-[280px]">
@@ -2535,6 +2789,10 @@ const CGWFlowMetre = () => {
                             setEquipmentFlowFiles((prev) =>
                               prev.map((b, i) => (i === idx ? { ...b, ...patch } : b))
                             );
+                          const rowSaved = (apiCategory) => ({
+                            existingAttachments: editMode && idx === 0 ? getSavedAttachments(apiCategory) : [],
+                            onPreviewExisting: (att) => handlePreviewSavedAttachment(att, apiCategory),
+                          });
                           return (
                             <Card key={idx} className="p-4 border border-gray-200 bg-white shadow-none rounded-lg">
                               <div className="flex items-start justify-between gap-3">
@@ -2576,6 +2834,7 @@ const CGWFlowMetre = () => {
                                       onChange={(bwGeoPhotos) => patchFlowFiles({ bwGeoPhotos })}
                                       hint="Click + to add GEO photos. Uploads after save (S3)."
                                       className="border-t border-gray-200 pt-3"
+                                      {...rowSaved('bw_geo_flowmeter')}
                                     />
                                   </div>
 
@@ -2587,6 +2846,7 @@ const CGWFlowMetre = () => {
                                       files={flowFiles.calibration_cert}
                                       onChange={(calibration_cert) => patchFlowFiles({ calibration_cert })}
                                       hint="Uploads after the row is saved (S3)."
+                                      {...rowSaved('calibration_certificate')}
                                     />
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                       <div className="space-y-2">
@@ -2618,6 +2878,7 @@ const CGWFlowMetre = () => {
                                       files={flowFiles.service_report}
                                       onChange={(service_report) => patchFlowFiles({ service_report })}
                                       hint="Optional; uploads after save (S3)."
+                                      {...rowSaved('service_report')}
                                     />
                                   </div>
 
@@ -2761,6 +3022,7 @@ const CGWFlowMetre = () => {
                                         files={flowFiles.telemetryPhotoFiles}
                                         onChange={(telemetryPhotoFiles) => patchFlowFiles({ telemetryPhotoFiles })}
                                         hint="Click + to add telemetry photos. Uploads after save (S3)."
+                                        {...rowSaved('telemetry')}
                                       />
 
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2895,6 +3157,7 @@ const CGWFlowMetre = () => {
                                                 accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                                                 files={flowFiles.telemetry_excel}
                                                 onChange={(telemetry_excel) => patchFlowFiles({ telemetry_excel })}
+                                                {...rowSaved('telemetry_excel_prior')}
                                               />
                                               <CgwMultiFilePicker
                                                 label="Prior-year telemetry service report"
@@ -2902,6 +3165,7 @@ const CGWFlowMetre = () => {
                                                 files={flowFiles.telemetry_service}
                                                 onChange={(telemetry_service) => patchFlowFiles({ telemetry_service })}
                                                 hint="Optional; uploads as prior-year telemetry report."
+                                                {...rowSaved('telemetry_service_prior')}
                                               />
                                             </div>
                                           ) : null}
@@ -2942,6 +3206,8 @@ const CGWFlowMetre = () => {
                       setPiezometerFiles={setPiezometerFiles}
                       telemetrySerialOptions={telemetrySerialOptions}
                       countLabel={`${piezometerWizardCount} piezometer${piezometerWizardCount !== 1 ? 's' : ''} (NOC count ${String(addNocForm.piezometer_count || '').trim() || '—'})`}
+                      editingItem={editingItem}
+                      onPreviewSaved={handlePreviewSavedAttachment}
                     />
                   </div>
                 ) : null}
@@ -2960,6 +3226,10 @@ const CGWFlowMetre = () => {
                           setEquipmentRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
                         const docAccept =
                           '.pdf,.jpg,.jpeg,.png,.webp,.gif,.xlsx,.xls,.csv,application/pdf,image/*,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv';
+                        const attachSaved = (cat) => ({
+                          existingAttachments: editMode && idx === 0 ? getSavedAttachments(cat) : [],
+                          onPreviewExisting: (att) => handlePreviewSavedAttachment(att, cat),
+                        });
                         return (
                           <div key={`add-attach-${idx}`} className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
                             <p className="text-xs font-semibold text-gray-700">Flow metre line {idx + 1}</p>
@@ -2969,36 +3239,42 @@ const CGWFlowMetre = () => {
                                 accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
                                 files={flowFiles.water_quality_certificate}
                                 onChange={(water_quality_certificate) => patchFlowFiles({ water_quality_certificate })}
+                                {...attachSaved('water_quality_certificate')}
                               />
                               <CgwMultiFilePicker
                                 label="CTE"
                                 accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
                                 files={flowFiles.cte}
                                 onChange={(cte) => patchFlowFiles({ cte })}
+                                {...attachSaved('cte')}
                               />
                               <CgwMultiFilePicker
                                 label="CTO"
                                 accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
                                 files={flowFiles.cto}
                                 onChange={(cto) => patchFlowFiles({ cto })}
+                                {...attachSaved('cto')}
                               />
                               <CgwMultiFilePicker
                                 label="RWSS/WATCO/PHED NOC"
                                 accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
                                 files={flowFiles.rwss_watco_phed_noc}
                                 onChange={(rwss_watco_phed_noc) => patchFlowFiles({ rwss_watco_phed_noc })}
+                                {...attachSaved('rwss_watco_phed_noc')}
                               />
                               <CgwMultiFilePicker
                                 label="Approval letter"
                                 accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
                                 files={flowFiles.approval_letter}
                                 onChange={(approval_letter) => patchFlowFiles({ approval_letter })}
+                                {...attachSaved('approval_letter')}
                               />
                               <CgwMultiFilePicker
                                 label="Rain water harvesting data"
                                 accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,application/pdf,image/*"
                                 files={flowFiles.rain_water_harvesting_data}
                                 onChange={(rain_water_harvesting_data) => patchFlowFiles({ rain_water_harvesting_data })}
+                                {...attachSaved('rain_water_harvesting_data')}
                               />
                             </div>
                             <div className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
@@ -3017,6 +3293,7 @@ const CGWFlowMetre = () => {
                                 files={flowFiles.additional_doc}
                                 onChange={(additional_doc) => patchFlowFiles({ additional_doc })}
                                 hint="Optional."
+                                {...attachSaved('additional_doc')}
                               />
                             </div>
                           </div>
@@ -3034,7 +3311,17 @@ const CGWFlowMetre = () => {
                       </Button>
                     )}
                   </div>
-                  <div className="flex gap-3">
+                  <div className="flex flex-wrap gap-3 justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={draftSaving || addWizardSubmitting}
+                      className="border-gray-300 text-gray-700 hover:bg-gray-50 bg-white"
+                      onClick={handleSaveDraft}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      {draftSaving ? 'Saving draft…' : 'Save draft'}
+                    </Button>
                     <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} className="border-gray-300 text-gray-700 hover:bg-gray-50">
                       Cancel
                     </Button>
@@ -3049,7 +3336,13 @@ const CGWFlowMetre = () => {
                         className="bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                         onClick={handleSubmit}
                       >
-                        {addWizardSubmitting ? 'Saving…' : editMode ? 'Update Item' : 'Add Item'}
+                        {addWizardSubmitting
+                          ? 'Saving…'
+                          : editMode && isDraftRecord(editingItem)
+                            ? 'Submit'
+                            : editMode
+                              ? 'Update Item'
+                              : 'Add Item'}
                       </Button>
                     )}
                   </div>
@@ -3543,7 +3836,14 @@ const CGWFlowMetre = () => {
                         </>
                       ) : (
                         <td className="py-3 px-3 text-gray-800 bg-indigo-50/35 text-xs align-top">
-                          <p className="font-mono font-medium">{item.flow_meter_serial || item.inventory_id || '—'}</p>
+                          <p className="font-mono font-medium">
+                            {item.flow_meter_serial || item.inventory_id || '—'}
+                            {isDraftRecord(item) ? (
+                              <span className="ml-2 inline-flex rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-slate-700">
+                                Draft
+                              </span>
+                            ) : null}
+                          </p>
                           <p className="text-[10px] text-gray-500 mt-0.5">{formatTelemetryCompanyDisplay(item)}</p>
                         </td>
                       )}
@@ -3651,7 +3951,7 @@ const CGWFlowMetre = () => {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 w-7 p-0 border-gray-200 text-xs text-gray-700 hover:bg-gray-50"
-                                  title="Edit"
+                                  title={isDraftRecord(item) ? 'Continue draft' : 'Edit'}
                                   onClick={() => handleEdit(item)}
                                 >
                                   <Edit className="h-3 w-3" />

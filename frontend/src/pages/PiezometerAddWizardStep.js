@@ -51,6 +51,14 @@ export function piezoRowToPersist(r) {
   return { ...rest, telemetry_previous_serial: telemetry_previous_serial || null };
 }
 
+const PIEZO_FILE_CATEGORIES = {
+  bwPhotos: 'piezometer_bw',
+  calibrationCert: 'piezometer_calibration',
+  telemetryPhotos: 'piezometer_telemetry',
+  telemetryExcel: 'piezometer_excel_prior',
+  priorTelemetryService: 'piezometer_service_report',
+};
+
 function PiezometerAddWizardStep({
   piezometerRows,
   setPiezometerRows,
@@ -60,6 +68,8 @@ function PiezometerAddWizardStep({
   countLabel,
   onSubmit,
   submitting,
+  editingItem = null,
+  onPreviewSaved = null,
 }) {
   return (
     <div className="space-y-4">
@@ -77,6 +87,13 @@ function PiezometerAddWizardStep({
           const bundle = piezometerFiles[idx] || {};
           const patchBundle = (patch) =>
             setPiezometerFiles((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
+          const pzSaved = (bundleKey) => {
+            const cat = PIEZO_FILE_CATEGORIES[bundleKey];
+            return {
+              existingAttachments: editingItem?.cgw_attachments?.[cat] || [],
+              onPreviewExisting: (att) => onPreviewSaved?.(att, cat),
+            };
+          };
           return (
             <Card key={idx} className="p-4 border border-gray-200 bg-white shadow-none rounded-lg space-y-4">
               <p className="text-sm font-semibold text-gray-800">Piezometer {idx + 1}</p>
@@ -117,6 +134,7 @@ function PiezometerAddWizardStep({
                   onChange={(bwPhotos) => patchBundle({ bwPhotos })}
                   hint="Click + to add photos. Uploads after save (S3)."
                   className="border-t border-gray-200 pt-3"
+                  {...pzSaved('bwPhotos')}
                 />
               </div>
 
@@ -128,6 +146,7 @@ function PiezometerAddWizardStep({
                   files={bundle.calibrationCert}
                   onChange={(calibrationCert) => patchBundle({ calibrationCert })}
                   hint="Uploads after save (S3)."
+                  {...pzSaved('calibrationCert')}
                 />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
@@ -291,6 +310,7 @@ function PiezometerAddWizardStep({
                     files={bundle.telemetryPhotos}
                     onChange={(telemetryPhotos) => patchBundle({ telemetryPhotos })}
                     hint="Click + to add telemetry photos."
+                    {...pzSaved('telemetryPhotos')}
                   />
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -425,6 +445,7 @@ function PiezometerAddWizardStep({
                             accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                             files={bundle.telemetryExcel}
                             onChange={(telemetryExcel) => patchBundle({ telemetryExcel })}
+                            {...pzSaved('telemetryExcel')}
                           />
                           <CgwMultiFilePicker
                             label="Upload service report"
@@ -432,6 +453,7 @@ function PiezometerAddWizardStep({
                             files={bundle.priorTelemetryService}
                             onChange={(priorTelemetryService) => patchBundle({ priorTelemetryService })}
                             hint="Optional prior-year service report."
+                            {...pzSaved('priorTelemetryService')}
                           />
                         </div>
                       ) : null}

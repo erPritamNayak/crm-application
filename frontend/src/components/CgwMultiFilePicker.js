@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Plus, X } from 'lucide-react';
+import { Eye, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 /** Coerce legacy single File or array into a stable File[]. */
@@ -36,6 +36,39 @@ function LocalImagePreviews({ files }) {
   );
 }
 
+/** Saved server-side attachments (preview in edit / after submit). */
+export function CgwExistingAttachments({ attachments, onPreview, label = 'Saved files' }) {
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (!list.length) return null;
+  return (
+    <div className="mb-2 space-y-1">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500">{label}</p>
+      <ul className="space-y-1">
+        {list.map((att) => (
+          <li
+            key={att.id}
+            className="flex items-center gap-2 rounded border border-blue-100 bg-blue-50/50 px-2 py-1.5 text-xs text-gray-800"
+          >
+            <span className="flex-1 truncate" title={att.file_name}>
+              {att.file_name || 'File'}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[10px] text-blue-700 hover:bg-blue-100"
+              onClick={() => onPreview?.(att)}
+            >
+              <Eye className="h-3 w-3 mr-1" />
+              Preview
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * Attachments via + button: each click opens file picker and appends to the list.
  */
@@ -48,6 +81,8 @@ export function CgwMultiFilePicker({
   hint = 'Click + to add files. You can add as many attachments as needed.',
   className = '',
   addLabel = 'Add',
+  existingAttachments = null,
+  onPreviewExisting = null,
 }) {
   const inputRef = useRef(null);
   const list = normalizeFileList(files);
@@ -97,6 +132,10 @@ export function CgwMultiFilePicker({
       <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={handlePick} />
 
       <div className="rounded-md border border-dashed border-gray-200 bg-white px-3 py-2.5">
+        <CgwExistingAttachments
+          attachments={existingAttachments}
+          onPreview={onPreviewExisting}
+        />
         <LocalImagePreviews files={list} />
         {list.length > 0 ? (
           <ul className="space-y-1.5">
