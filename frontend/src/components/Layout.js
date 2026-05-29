@@ -18,7 +18,6 @@ import {
   Shield,
   Briefcase,
   Target,
-  Package,
   CheckSquare,
   Fuel,
   MapPin,
@@ -26,7 +25,6 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart3,
-  Wallet
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { PageHeaderProvider, usePageHeader, usePageHeaderActions } from '@/contexts/PageHeaderContext';
@@ -122,7 +120,6 @@ export const Layout = () => {
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard', permission: 'dashboard' },
     { icon: Target, label: 'Leads', path: '/leads', permission: 'leads' },
-    { icon: Package, label: 'Inventory', path: '/inventory', permission: 'leads' },
     { icon: Users, label: 'Employees', path: '/employees', permission: 'employees' },
     { icon: Users, label: 'Customers', path: '/customers', permission: 'customers' },
     { icon: Droplets, label: 'CGW Flow Metre', path: '/cgw-flow-metre', permission: 'cgw-flow-metre' },
@@ -133,7 +130,6 @@ export const Layout = () => {
     { icon: FileText, label: 'Leaves', path: '/leaves', permission: 'leaves' },
     { icon: CalendarDays, label: 'Government Holidays', path: '/government-holidays', permission: 'holidays' },
     { icon: Receipt, label: 'Expenses', path: '/expenses', permission: 'expenses' },
-    { icon: Wallet, label: 'Salary', path: '/salary', allowedRoles: ['Admin', 'Accountant'] },
     { icon: Fuel, label: 'Vehicle Tracking', path: '/vehicles', permission: 'vehicles' },
     { icon: Shield, label: 'Roles', path: '/roles', permission: 'roles' },
     { icon: Briefcase, label: 'Workspace', path: '/workspace', permission: 'workspace' },

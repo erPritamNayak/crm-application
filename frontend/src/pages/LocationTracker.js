@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from 'react-leaflet';
@@ -45,9 +45,55 @@ function typeLabel(type) {
   return 'GPS track';
 }
 
-function RouteMapLeaflet({ locations, selectedId, onSelectLocation }) {
-  const path = locations.map((loc) => [loc.latitude, loc.longitude]);
+function downsamplePath(points, maxPoints = 110) {
+  if (points.length <= maxPoints) return points;
+  const step = Math.max(1, Math.floor(points.length / maxPoints));
+  const sampled = [];
+  for (let i = 0; i < points.length; i += step) sampled.push(points[i]);
+  const last = points[points.length - 1];
+  const tail = sampled[sampled.length - 1];
+  if (!tail || tail[0] !== last[0] || tail[1] !== last[1]) sampled.push(last);
+  return sampled;
+}
+
+function RouteMapLeaflet({ locations, selectedId, onSelectLocation, useRoadRoute }) {
+  const path = useMemo(() => locations.map((loc) => [loc.latitude, loc.longitude]), [locations]);
   const center = path.length ? path[0] : defaultCenter;
+  const [roadPath, setRoadPath] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!useRoadRoute || path.length < 2) {
+      setRoadPath([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const sampled = downsamplePath(path, 110);
+    const coordStr = sampled.map(([lat, lng]) => `${lng},${lat}`).join(';');
+    const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+
+    (async () => {
+      try {
+        const res = await axios.get(url, { timeout: 15000 });
+        const coords = res?.data?.routes?.[0]?.geometry?.coordinates;
+        if (!Array.isArray(coords) || !coords.length) {
+          if (!cancelled) setRoadPath([]);
+          return;
+        }
+        if (!cancelled) setRoadPath(coords.map(([lng, lat]) => [lat, lng]));
+      } catch {
+        if (!cancelled) setRoadPath([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [path, useRoadRoute]);
+
+  const displayPath = roadPath.length > 1 ? roadPath : path;
 
   return (
     <MapContainer
@@ -57,9 +103,9 @@ function RouteMapLeaflet({ locations, selectedId, onSelectLocation }) {
       scrollWheelZoom
     >
       <TileLayer attribution={OSM_ATTRIBUTION} url={OSM_TILE_URL} />
-      {path.length > 1 && (
+      {displayPath.length > 1 && (
         <Polyline
-          positions={path}
+          positions={displayPath}
           pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.85 }}
         />
       )}
@@ -108,7 +154,7 @@ function RouteMapLeaflet({ locations, selectedId, onSelectLocation }) {
           </CircleMarker>
         );
       })}
-      {path.length > 0 && <FitBounds points={path} />}
+      {displayPath.length > 0 && <FitBounds points={displayPath} />}
     </MapContainer>
   );
 }
@@ -127,6 +173,7 @@ const LocationTracker = () => {
   const [loading, setLoading] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [liveRefresh, setLiveRefresh] = useState(true);
+  const [useRoadRoute, setUseRoadRoute] = useState(true);
 
   const fetchEmployees = useCallback(async () => {
     try {
@@ -275,19 +322,27 @@ const LocationTracker = () => {
             </p>
           </div>
 
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
+            <Button
+              type="button"
+              variant={useRoadRoute ? 'default' : 'outline'}
+              className={useRoadRoute ? 'bg-indigo-600 hover:bg-indigo-700 text-white h-11 flex-1' : 'h-11 flex-1'}
+              onClick={() => setUseRoadRoute((v) => !v)}
+            >
+              {useRoadRoute ? 'Road route on' : 'Road route off'}
+            </Button>
             {date === todayStr ? (
               <Button
                 type="button"
                 variant={liveRefresh ? 'default' : 'outline'}
-                className={liveRefresh ? 'bg-blue-600 hover:bg-blue-700 text-white h-11 w-full' : 'h-11 w-full'}
+                className={liveRefresh ? 'bg-blue-600 hover:bg-blue-700 text-white h-11 flex-1' : 'h-11 flex-1'}
                 onClick={() => setLiveRefresh((v) => !v)}
               >
                 <Radio className={`h-4 w-4 mr-2 ${liveRefresh ? 'animate-pulse' : ''}`} />
-                {liveRefresh ? 'Live refresh on' : 'Live refresh off'}
+                {liveRefresh ? 'Live on' : 'Live off'}
               </Button>
             ) : (
-              <Button type="button" variant="outline" className="h-11 w-full" onClick={fetchLocations}>
+              <Button type="button" variant="outline" className="h-11 flex-1" onClick={fetchLocations}>
                 Reload map
               </Button>
             )}
@@ -320,6 +375,7 @@ const LocationTracker = () => {
             locations={locations}
             selectedId={selectedId}
             onSelectLocation={setSelectedLocation}
+            useRoadRoute={useRoadRoute}
           />
         )}
       </Card>
@@ -389,7 +445,7 @@ const LocationTracker = () => {
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> GPS track
             </span>
             <span className="flex items-center gap-2">
-              <span className="h-0.5 w-6 bg-blue-600" /> Route
+              <span className="h-0.5 w-6 bg-blue-600" /> {useRoadRoute ? 'Road route (snapped)' : 'Route (straight line)'}
             </span>
           </div>
         </Card>

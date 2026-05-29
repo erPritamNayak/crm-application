@@ -48,21 +48,21 @@ import {
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
-const SOURCES = ['Website', 'Referral', 'Cold Call', 'Social Media', 'Partner', 'Exhibition', 'Other'];
+const SOURCES = ['India Mart', 'Mail Inquery', 'Telephonic', 'Whats app', 'Other'];
 const STATUSES = ['New', 'Contacted', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'];
 const ACTIVITY_TYPES = ['Call', 'Email', 'Meeting', 'Note'];
 
 const CATEGORY_OPTIONS = [
   'Project',
   'Automation',
-  'Instruments',
-  'Electrical &utility',
-  'Ion exchange',
-  'ssd',
-  'ion exchange chemical',
-  'cgw noc',
-  'cgwa flow metre',
+  'Instrumentation',
+  'Electrical & Electronics',
+  'ION Exchange SSD',
+  'ION Exchange Chemical',
+  'CGWA NOC',
+  'CGWA Flowmeter',
 ];
+const BUSINESS_CATEGORY_OPTIONS = ['carry and order', 'stock and sell', 'consultancy'];
 
 const defaultLeadForm = {
   contact_name: '',
@@ -118,12 +118,14 @@ export const Leads = () => {
   const [detailTab, setDetailTab] = useState('overview'); // 'overview', 'activity', 'reminders'
   const [importing, setImporting] = useState(false);
   const [attachments, setAttachments] = useState([]);
+  const [leadAttachment, setLeadAttachment] = useState(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [customerContacts, setCustomerContacts] = useState([]);
   const fileInputRef = useRef(null);
   const statusChangeFileRef = useRef(null);
   const [showOrderDialog, setShowOrderDialog] = useState(false);
   const [wonLead, setWonLead] = useState(null);
+  const [orderAttachment, setOrderAttachment] = useState(null);
   const [orderForm, setOrderForm] = useState({
     customer_name: '',
     contact_person: '',
@@ -333,14 +335,27 @@ export const Leads = () => {
     try {
       const payload = {
         ...formData,
-        value: formData.value ? parseFloat(formData.value) : null,
         assigned_to_employee_id: formData.assigned_to_employee_id || null,
         assigned_to_name: formData.assigned_to_name || null,
+        contacts: [],
       };
-      await axios.post(`${API}/leads`, payload, { headers: authHeader() });
+      const { data: createdLead } = await axios.post(`${API}/leads`, payload, { headers: authHeader() });
+
+      if (leadAttachment && createdLead?.id) {
+        const fileForm = new FormData();
+        fileForm.append('file', leadAttachment);
+        await axios.post(`${API}/leads/${createdLead.id}/attachments`, fileForm, {
+          headers: {
+            ...authHeader(),
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
       toast.success('Lead created');
       setAddDialogOpen(false);
       setFormData(defaultLeadForm);
+      setLeadAttachment(null);
       setSelectedCustomerId('');
       setCustomerContacts([]);
       fetchLeads();
@@ -356,14 +371,26 @@ export const Leads = () => {
     try {
       const payload = {
         ...formData,
-        value: formData.value ? parseFloat(formData.value) : null,
         assigned_to_employee_id: formData.assigned_to_employee_id || null,
         assigned_to_name: formData.assigned_to_name || null,
       };
       await axios.put(`${API}/leads/${selectedLead.id}`, payload, { headers: authHeader() });
+
+      if (leadAttachment) {
+        const fileForm = new FormData();
+        fileForm.append('file', leadAttachment);
+        await axios.post(`${API}/leads/${selectedLead.id}/attachments`, fileForm, {
+          headers: {
+            ...authHeader(),
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
       toast.success('Lead updated');
       setEditDialogOpen(false);
       setSelectedLead(null);
+      setLeadAttachment(null);
       setSelectedCustomerId('');
       setCustomerContacts([]);
       fetchLeads();
@@ -475,6 +502,7 @@ export const Leads = () => {
       if (pendingStatusChange.newStatus === 'Won') {
         const updatedLead = data;
         setWonLead(updatedLead);
+        setOrderAttachment(null);
         setOrderForm({
           customer_name: updatedLead.company || '',
           contact_person: updatedLead.contact_name || '',
@@ -533,16 +561,35 @@ export const Leads = () => {
       return;
     }
     try {
+      let uploadedAttachmentUrl = null;
+      if (orderAttachment) {
+        const fileForm = new FormData();
+        fileForm.append('file', orderAttachment);
+        const uploadRes = await axios.post(
+          `${API}/leads/${wonLead.id}/attachments`,
+          fileForm,
+          {
+            headers: {
+              ...authHeader(),
+              'Content-Type': 'multipart/form-data',
+            },
+          },
+        );
+        uploadedAttachmentUrl = uploadRes.data?.file_url || null;
+      }
+
       const payload = {
         lead_id: wonLead.id,
         ...orderForm,
         estimation: orderForm.estimation ? parseFloat(orderForm.estimation) : null,
+        order_copy_path: uploadedAttachmentUrl || orderForm.order_copy_path || null,
       };
       
       await axios.post(`${API}/orders`, payload, { headers: authHeader() });
       toast.success('Order created successfully!');
       setShowOrderDialog(false);
       setWonLead(null);
+      setOrderAttachment(null);
       setOrderForm({
         customer_name: '',
         contact_person: '',
@@ -843,7 +890,10 @@ export const Leads = () => {
         <Button
           size="sm"
           className="bg-blue-600 text-white hover:bg-blue-700 h-9 sm:h-10 text-xs sm:text-sm"
-          onClick={() => setAddDialogOpen(true)}
+          onClick={() => {
+            setLeadAttachment(null);
+            setAddDialogOpen(true);
+          }}
         >
           <Plus className="h-4 w-4 mr-1" />
           Add Lead
@@ -1046,13 +1096,17 @@ export const Leads = () => {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold text-gray-700">Sub Category</Label>
-                  <Input
+                  <Label className="text-sm font-semibold text-gray-700">Business Category</Label>
+                  <select
                     value={formData.sub_category}
                     onChange={(e) => setFormData({ ...formData, sub_category: e.target.value })}
-                    placeholder="Enter sub category"
-                    className="h-11 border border-gray-300"
-                  />
+                    className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
+                  >
+                    <option value="">Select business category</option>
+                    {BUSINESS_CATEGORY_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1083,18 +1137,6 @@ export const Leads = () => {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold text-gray-700">Value (₹)</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formData.value}
-                    onChange={(e) => setFormData({ ...formData, value: e.target.value })}
-                    placeholder="0"
-                    className="h-11 border border-gray-300"
-                  />
-                </div>
-                <div className="space-y-2">
                   <Label className="text-sm font-semibold text-gray-700">Assigned To</Label>
                   <select
                     value={formData.assigned_to_employee_id}
@@ -1116,75 +1158,27 @@ export const Leads = () => {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label className="text-sm font-semibold text-gray-700">Notes</Label>
+                <Label className="text-sm font-semibold text-gray-700">Inquery Details</Label>
                 <textarea
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Brief notes..."
+                  placeholder="Enter inquery details..."
                   rows={3}
                   className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm resize-none"
                 />
               </div>
               <div className="space-y-2">
-                <Label className="text-sm font-semibold text-gray-700">Contacts</Label>
-                {formData.contacts.map((c, idx) => (
-                  <div key={idx} className="flex gap-2 mb-2 flex-wrap">
-                    <Input
-                      value={c.name}
-                      onChange={e => {
-                        const contacts = [...formData.contacts];
-                        contacts[idx].name = e.target.value;
-                        setFormData({ ...formData, contacts });
-                      }}
-                      placeholder="Name"
-                      className="border border-gray-300"
-                    />
-                    <Input
-                      value={c.designation}
-                      onChange={e => {
-                        const contacts = [...formData.contacts];
-                        contacts[idx].designation = e.target.value;
-                        setFormData({ ...formData, contacts });
-                      }}
-                      placeholder="Designation"
-                      className="border border-gray-300"
-                    />
-                    <Input
-                      value={c.email}
-                      onChange={e => {
-                        const contacts = [...formData.contacts];
-                        contacts[idx].email = e.target.value;
-                        setFormData({ ...formData, contacts });
-                      }}
-                      placeholder="Email"
-                      className="border border-gray-300"
-                    />
-                    <Input
-                      value={c.number}
-                      onChange={e => {
-                        const contacts = [...formData.contacts];
-                        contacts[idx].number = e.target.value;
-                        setFormData({ ...formData, contacts });
-                      }}
-                      placeholder="Number"
-                      className="border border-gray-300"
-                    />
-                    {formData.contacts.length > 1 && (
-                      <Button type="button" size="icon" variant="outline" className="h-9 w-9 text-red-600 border-red-200 hover:bg-red-100" onClick={() => {
-                        setFormData({ ...formData, contacts: formData.contacts.filter((_, i) => i !== idx) });
-                      }}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-                <Button type="button" size="sm" variant="outline" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setFormData({ ...formData, contacts: [...formData.contacts, { name: '', designation: '', email: '', number: '' }] })}>
-                  <Plus className="h-4 w-4 mr-1" /> Add Contact
-                </Button>
+                <Label className="text-sm font-semibold text-gray-700">Attachment</Label>
+                <Input
+                  type="file"
+                  onChange={(e) => setLeadAttachment(e.target.files?.[0] || null)}
+                  className="h-11 border border-gray-300"
+                />
               </div>
               <div className="flex justify-end gap-3 pt-2">
                 <Button type="button" variant="outline" onClick={() => {
                   setAddDialogOpen(false);
+                  setLeadAttachment(null);
                   setSelectedCustomerId('');
                   setCustomerContacts([]);
                 }}>
@@ -1398,6 +1392,7 @@ export const Leads = () => {
                                 sub_category: lead.sub_category || '',
                                 contacts: Array.isArray(lead.contacts) ? lead.contacts : (lead.contacts ? [lead.contacts] : [{ name: '', designation: '', email: '', number: '' }]),
                               });
+                              setLeadAttachment(null);
                               setEditDialogOpen(true);
                             }}
                           >
@@ -1647,7 +1642,7 @@ export const Leads = () => {
                         <p className="text-sm text-gray-700">{selectedLead.category}</p>
                       )}
                       {selectedLead.sub_category && (
-                        <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Sub Category</p>
+                        <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Business Category</p>
                       )}
                       {selectedLead.sub_category && (
                         <p className="text-sm text-gray-700">{selectedLead.sub_category}</p>
@@ -1675,6 +1670,7 @@ export const Leads = () => {
                             sub_category: selectedLead.sub_category || '',
                             contacts: Array.isArray(selectedLead.contacts) ? selectedLead.contacts : (selectedLead.contacts ? [selectedLead.contacts] : [{ name: '', designation: '', email: '', number: '' }]),
                           });
+                          setLeadAttachment(null);
                           setDetailSheetOpen(false);
                           setEditDialogOpen(true);
                         }}
@@ -2157,13 +2153,17 @@ export const Leads = () => {
                 </select>
               </div>
               <div className="space-y-2">
-                <Label className="text-sm font-semibold text-gray-700">Sub Category</Label>
-                <Input
+                <Label className="text-sm font-semibold text-gray-700">Business Category</Label>
+                <select
                   value={formData.sub_category}
                   onChange={(e) => setFormData({ ...formData, sub_category: e.target.value })}
-                  placeholder="Enter sub category"
-                  className="h-11 border border-gray-300"
-                />
+                  className="flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900"
+                >
+                  <option value="">Select business category</option>
+                  {BUSINESS_CATEGORY_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -2194,17 +2194,6 @@ export const Leads = () => {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label className="text-sm font-semibold text-gray-700">Value (₹)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={formData.value}
-                  onChange={(e) => setFormData({ ...formData, value: e.target.value })}
-                  className="h-11 border border-gray-300"
-                />
-              </div>
-              <div className="space-y-2">
                 <Label className="text-sm font-semibold text-gray-700">Assigned To</Label>
                 <select
                   value={formData.assigned_to_employee_id}
@@ -2226,7 +2215,7 @@ export const Leads = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <Label className="text-sm font-semibold text-gray-700">Notes</Label>
+              <Label className="text-sm font-semibold text-gray-700">Inquery Details</Label>
               <textarea
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -2291,9 +2280,18 @@ export const Leads = () => {
                 <Plus className="h-4 w-4 mr-1" /> Add Contact
               </Button>
             </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold text-gray-700">Attachment</Label>
+              <Input
+                type="file"
+                onChange={(e) => setLeadAttachment(e.target.files?.[0] || null)}
+                className="h-11 border border-gray-300"
+              />
+            </div>
             <div className="flex justify-end gap-3 pt-2">
               <Button type="button" variant="outline" onClick={() => {
                 setEditDialogOpen(false);
+                setLeadAttachment(null);
                 setSelectedCustomerId('');
                 setCustomerContacts([]);
               }}>
@@ -2373,12 +2371,30 @@ export const Leads = () => {
                   />
                 </div>
                 <div>
-                  <Label className="text-xs font-semibold text-gray-700">Product</Label>
-                  <Input
+                  <Label className="text-xs font-semibold text-gray-700">Business Category</Label>
+                  <select
                     value={orderForm.product}
                     onChange={(e) => setOrderForm({ ...orderForm, product: e.target.value })}
+                    className="mt-1 w-full border border-gray-300 rounded h-9 px-2 text-sm bg-white"
+                  >
+                    <option value="">Select business category</option>
+                    {BUSINESS_CATEGORY_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <Label className="text-xs font-semibold text-gray-700">Attachment (Any file/image)</Label>
+                  <Input
+                    type="file"
+                    onChange={(e) => setOrderAttachment(e.target.files?.[0] || null)}
                     className="mt-1 border border-gray-300 rounded h-9"
                   />
+                  {orderAttachment ? (
+                    <p className="mt-1 text-[11px] text-gray-600 truncate" title={orderAttachment.name}>
+                      Selected: {orderAttachment.name}
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <Label className="text-xs font-semibold text-gray-700">PO No.</Label>
@@ -2409,7 +2425,7 @@ export const Leads = () => {
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t border-gray-200">
-                <Button type="button" variant="outline" className="text-gray-700 border-gray-300 hover:bg-gray-50" onClick={() => { setShowOrderDialog(false); setWonLead(null); }}>
+                <Button type="button" variant="outline" className="text-gray-700 border-gray-300 hover:bg-gray-50" onClick={() => { setShowOrderDialog(false); setWonLead(null); setOrderAttachment(null); }}>
                   Skip
                 </Button>
                 <Button type="submit" className="bg-green-600 hover:bg-green-700 text-white">

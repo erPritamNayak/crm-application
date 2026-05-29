@@ -24,10 +24,8 @@ import { Workspace } from '@/pages/Workspace';
 import { Leads } from '@/pages/Leads';
 import { GovernmentHolidays } from '@/pages/GovernmentHolidays';
 import Vehicles from '@/pages/Vehicles';
-import Inventory from '@/pages/Inventory';
 import LocationTracker from '@/pages/LocationTracker';
 import CGWFlowMetre from '@/pages/CGWFlowMetre';
-import { Salary } from '@/pages/Salary';
 
 function App() {
   return (
@@ -54,15 +52,6 @@ function App() {
                   element={
                     <ProtectedRoute requiredPermission="leads">
                       <Leads />
-                    </ProtectedRoute>
-                  }
-                />
-
-                <Route
-                  path="/inventory"
-                  element={
-                    <ProtectedRoute requiredPermission="leads">
-                      <Inventory />
                     </ProtectedRoute>
                   }
                 />
@@ -198,15 +187,6 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Payroll />
-                    </ProtectedRoute>
-                  }
-                />
-
-                <Route
-                  path="/salary"
-                  element={
-                    <ProtectedRoute allowedRoles={['Admin', 'Accountant']}>
-                      <Salary />
                     </ProtectedRoute>
                   }
                 />
