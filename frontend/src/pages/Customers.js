@@ -5,10 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useRegisterPageHeader } from '@/contexts/PageHeaderContext';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Mail, Phone, MapPin, Building2, Store, X } from 'lucide-react';
 import { API_ENDPOINT } from '@/lib/apiConfig';
 
 const API = API_ENDPOINT;
@@ -208,6 +207,9 @@ export const Customers = () => {
 
   const handleEdit = (customer) => {
     setEditingRecord(customer);
+    setDialogEntityType(
+      customer.entity_type === 1 || customer.entity_type === '1' ? ENTITY_VENDOR : ENTITY_CUSTOMER
+    );
     const contactsData = customer.contacts && customer.contacts.length > 0 
       ? customer.contacts.map(c => ({ contact_person_name: c.contact_person_name, designation: c.designation || '', phone: c.phone || '', email: c.email || '', is_primary: c.is_primary || 0 }))
       : [{ contact_person_name: '', designation: '', phone: '', email: '', is_primary: 0 }];
@@ -300,7 +302,164 @@ export const Customers = () => {
     enabled: !loading,
   });
 
-  if (loading) {
+  const ledgerTabs = [
+    { id: 'customer', label: 'Customers', icon: Building2 },
+    { id: 'vendor', label: 'Vendors', icon: Store },
+  ];
+
+  const renderLedgerTable = () => (
+    <div className="overflow-x-auto border border-gray-200 rounded-lg">
+      <table className="w-full text-sm min-w-[640px]">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            <th className="text-left p-3 font-medium text-gray-700">{entityLabel} ID</th>
+            <th className="text-left p-3 font-medium text-gray-700">Company Name</th>
+            <th className="text-left p-3 font-medium text-gray-700">Contact Person</th>
+            <th className="text-left p-3 font-medium text-gray-700">Phone</th>
+            <th className="text-left p-3 font-medium text-gray-700">Email</th>
+            <th className="text-left p-3 font-medium text-gray-700">GST Number</th>
+            <th className="text-left p-3 font-medium text-gray-700">City</th>
+            <th className="text-left p-3 font-medium text-gray-700">Status</th>
+            <th className="text-left p-3 font-medium text-gray-700">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredRecords.map((customer) => (
+            <tr
+              key={customer.id}
+              className="border-b border-gray-100 hover:bg-gray-50"
+              data-testid={`customer-card-${customer.customer_id}`}
+            >
+              <td className="p-3 font-mono text-gray-900">{customer.customer_id}</td>
+              <td className="p-3 font-medium text-gray-900">{customer.company_name}</td>
+              <td className="p-3 text-gray-700">{customer.contact_person_name}</td>
+              <td className="p-3 text-gray-700">
+                {customerDisplayPhone(customer) ? (
+                  <span className="flex items-center gap-1.5">
+                    <Phone className="h-3.5 w-3 text-gray-400 shrink-0" />
+                    {customerDisplayPhone(customer)}
+                  </span>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td className="p-3 text-gray-700">
+                {customerDisplayEmail(customer) ? (
+                  <span className="flex items-center gap-1.5">
+                    <Mail className="h-3.5 w-3 text-gray-400 shrink-0" />
+                    <span className="truncate max-w-[160px]" title={customerDisplayEmail(customer)}>
+                      {customerDisplayEmail(customer)}
+                    </span>
+                  </span>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td className="p-3 text-gray-700 font-mono">{customer.gst_number || '—'}</td>
+              <td className="p-3 text-gray-700">{customerDisplayCity(customer) || '—'}</td>
+              <td className="p-3">
+                <span
+                  className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                    customer.status === 'Active' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {customer.status}
+                </span>
+              </td>
+              <td className="p-3">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 border-gray-300"
+                    onClick={() => handleEdit(customer)}
+                    data-testid={`edit-customer-${customer.customer_id}`}
+                  >
+                    <Edit className="h-3.5 w-3 mr-1" />
+                    Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 border-gray-300 text-red-600 hover:bg-red-50"
+                    onClick={() => handleDelete(customer.id)}
+                    data-testid={`delete-customer-${customer.customer_id}`}
+                  >
+                    <Trash2 className="h-3.5 w-3 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const renderLedgerPanel = (tabId) => {
+    const isVendor = tabId === 'vendor';
+    const panelLabel = isVendor ? 'Vendor' : 'Customer';
+    const panelLabelPlural = isVendor ? 'vendors' : 'customers';
+    const addType = isVendor ? ENTITY_VENDOR : ENTITY_CUSTOMER;
+    const TabIcon = isVendor ? Store : Building2;
+    const count = recordsForActiveTab.length;
+
+    return (
+      <Card
+        key={tabId}
+        className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden"
+      >
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <TabIcon className={`h-5 w-5 ${isVendor ? 'text-violet-600' : 'text-blue-600'}`} />
+              {panelLabel} directory
+            </h3>
+            <p className="text-sm text-gray-600 mt-1">
+              Manage {panelLabelPlural}, contacts, and addresses in one place.
+            </p>
+          </div>
+          <Button
+            className="bg-blue-600 text-white hover:bg-blue-700 shrink-0"
+            data-testid={isVendor ? 'add-vendor-button' : 'add-customer-button'}
+            onClick={() => openAddDialog(addType)}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add {panelLabel}
+          </Button>
+        </div>
+
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              data-testid="customer-search-input"
+              placeholder={`Search ${panelLabelPlural} by company, contact, email, phone, or ID...`}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 h-10 rounded-lg border border-gray-300 text-gray-900"
+            />
+          </div>
+          <p className="text-sm text-gray-500 sm:ml-auto tabular-nums">
+            {loading ? 'Loading…' : `${filteredRecords.length} of ${count} shown`}
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent" />
+          </div>
+        ) : filteredRecords.length === 0 ? (
+          <p className="text-center py-12 text-gray-500">No {panelLabelPlural} found.</p>
+        ) : (
+          renderLedgerTable()
+        )}
+      </Card>
+    );
+  };
+
+  if (loading && records.length === 0 && !searchTerm) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
@@ -309,7 +468,10 @@ export const Customers = () => {
   }
 
   return (
-    <div className="space-y-6" data-testid="customers-page">
+    <div
+      className="space-y-5 sm:space-y-6 text-slate-800 antialiased [font-family:ui-sans-serif,system-ui,-apple-system,Segoe_UI,Roboto,Inter,sans-serif]"
+      data-testid="customers-page"
+    >
       <Dialog open={dialogOpen} onOpenChange={(open) => {
         setDialogOpen(open);
         if (!open) resetForm();
@@ -559,167 +721,38 @@ export const Customers = () => {
         </DialogContent>
       </Dialog>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => {
-          setActiveTab(value);
-          setDialogOpen(false);
-          resetForm();
-        }}
-        className="space-y-4"
-      >
-        <TabsList className="grid w-full max-w-md grid-cols-2 bg-gray-100 p-1 rounded-lg">
-          <TabsTrigger
-            value="customer"
-            className="data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm rounded-md"
-          >
-            Customers
-          </TabsTrigger>
-          <TabsTrigger
-            value="vendor"
-            className="data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm rounded-md"
-          >
-            Vendors
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="customer" className="mt-0 space-y-4">
-          <div className="flex justify-end">
-            <Button
-              className="bg-blue-600 text-white hover:bg-blue-700 h-9 sm:h-10 text-sm"
-              data-testid="add-customer-button"
-              onClick={() => openAddDialog(ENTITY_CUSTOMER)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Customer
-            </Button>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="vendor" className="mt-0 space-y-4">
-          <div className="flex justify-end">
-            <Button
-              className="bg-blue-600 text-white hover:bg-blue-700 h-9 sm:h-10 text-sm"
-              data-testid="add-vendor-button"
-              onClick={() => openAddDialog(ENTITY_VENDOR)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Vendor
-            </Button>
-          </div>
-        </TabsContent>
-
-        <div className="space-y-4">
-      {/* Search */}
-      <Card className="p-4 rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            data-testid="customer-search-input"
-            placeholder={`Search by company name, contact person, email, phone, or ${entityLabelLower} ID...`}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 border border-gray-300 h-10 rounded-lg text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-          />
+      <Card className="p-2 sm:p-2.5 rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/70">
+        <div className="flex gap-1 flex-wrap items-center [&_button]:min-h-[44px]">
+          {ledgerTabs.map((tab) => {
+            const Icon = tab.icon;
+            const on = activeTab === tab.id;
+            return (
+              <Button
+                key={tab.id}
+                variant="ghost"
+                size="sm"
+                className={`rounded-xl gap-2 px-3.5 sm:px-4 transition-colors ${
+                  on
+                    ? 'bg-sky-50 text-sky-800 shadow-sm ring-1 ring-sky-100'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                }`}
+                onClick={() => {
+                  if (activeTab === tab.id) return;
+                  setActiveTab(tab.id);
+                  setDialogOpen(false);
+                  resetForm();
+                }}
+              >
+                <Icon className={`h-4 w-4 shrink-0 ${on ? 'text-sky-600' : 'text-slate-400'}`} />
+                <span className="font-medium">{tab.label}</span>
+              </Button>
+            );
+          })}
         </div>
       </Card>
 
-      {/* Customers table grid */}
-      <Card className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
-        <div className="overflow-x-auto table-scroll">
-          <table className="w-full text-sm min-w-[640px]">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">{entityLabel} ID</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Company Name</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Contact Person</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Phone</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Email</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">GST Number</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">City</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRecords.map((customer) => (
-                <tr
-                  key={customer.id}
-                  className="border-b border-gray-100 hover:bg-gray-50/50"
-                  data-testid={`customer-card-${customer.customer_id}`}
-                >
-                  <td className="py-3 px-4 font-mono text-gray-900">{customer.customer_id}</td>
-                  <td className="py-3 px-4 font-medium text-gray-900">{customer.company_name}</td>
-                  <td className="py-3 px-4 text-gray-600">{customer.contact_person_name}</td>
-                  <td className="py-3 px-4 text-gray-600">
-                    {customerDisplayPhone(customer) ? (
-                      <span className="flex items-center gap-1.5">
-                        <Phone className="h-3.5 w-3 text-gray-400 shrink-0" />
-                        {customerDisplayPhone(customer)}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-gray-600">
-                    {customerDisplayEmail(customer) ? (
-                      <span className="flex items-center gap-1.5">
-                        <Mail className="h-3.5 w-3 text-gray-400 shrink-0" />
-                        <span className="truncate max-w-[160px]" title={customerDisplayEmail(customer)}>
-                          {customerDisplayEmail(customer)}
-                        </span>
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-gray-600 font-mono">{customer.gst_number || '—'}</td>
-                  <td className="py-3 px-4 text-gray-600">{customerDisplayCity(customer) || '—'}</td>
-                  <td className="py-3 px-4">
-                    <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-medium ${
-                      customer.status === 'Active' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {customer.status}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 border-gray-200 text-gray-700 hover:bg-gray-50"
-                        onClick={() => handleEdit(customer)}
-                        data-testid={`edit-customer-${customer.customer_id}`}
-                      >
-                        <Edit className="h-3.5 w-3 mr-1" />
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 border-gray-200 text-red-600 hover:bg-red-50"
-                        onClick={() => handleDelete(customer.id)}
-                        data-testid={`delete-customer-${customer.customer_id}`}
-                      >
-                        <Trash2 className="h-3.5 w-3 mr-1" />
-                        Delete
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {filteredRecords.length === 0 && (
-        <Card className="p-12 text-center rounded-lg border border-gray-200 bg-white shadow-sm">
-          <p className="text-gray-600">No {entityLabelLower}s found</p>
-        </Card>
-      )}
-        </div>
-      </Tabs>
+      {activeTab === 'customer' && renderLedgerPanel('customer')}
+      {activeTab === 'vendor' && renderLedgerPanel('vendor')}
     </div>
   );
 };

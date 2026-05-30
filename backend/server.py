@@ -1039,17 +1039,21 @@ def migrate_leads_add_negotiation_fields():
             pass
 
 def migrate_leads_add_enquiry_date():
-    """Add enquiry_date column to leads if missing."""
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        try:
-            r = conn.execute(text("PRAGMA table_info(leads)"))
-            cols = [row[1] for row in r.fetchall()]
-            if 'enquiry_date' not in cols:
-                conn.execute(text("ALTER TABLE leads ADD COLUMN enquiry_date VARCHAR(10)"))
-            conn.commit()
-        except Exception:
-            pass
+    """Add enquiry_date column to leads if missing (MySQL and SQLite)."""
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        cols = [col['name'] for col in inspector.get_columns('leads')]
+        if 'enquiry_date' not in cols:
+            with engine.connect() as conn:
+                if DATABASE_URL.startswith('mysql'):
+                    conn.execute(text('ALTER TABLE leads ADD COLUMN enquiry_date VARCHAR(10) NULL'))
+                else:
+                    conn.execute(text('ALTER TABLE leads ADD COLUMN enquiry_date VARCHAR(10)'))
+                conn.commit()
+            print('leads.enquiry_date column added')
+    except Exception as e:
+        print(f'Migration error for leads enquiry_date: {e}')
 
 def migrate_orders_add_attachments_and_estimation():
     """Add offer_copy_path, order_copy_path, estimation and subscription reminder tracking columns to orders if missing."""
@@ -2206,11 +2210,11 @@ class RoleUpdate(BaseModel):
     permissions: Optional[List[str]] = None
 
 class Lead(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    contact_name: str
-    company: str
-    email: str
+    contact_name: str = ''
+    company: str = ''
+    email: str = ''
     phone: Optional[str] = None
     source: str = 'Other'
     status: str = 'New'
@@ -8239,6 +8243,32 @@ def can_edit_lead(lead: LeadModel, current_user: UserModel) -> bool:
         return lead.created_by_employee_id and str(lead.created_by_employee_id) == str(current_user.employee_id or '')
     return False
 
+
+def _deserialize_lead_contacts(lead: LeadModel) -> None:
+    """Parse contacts JSON on the ORM instance for API serialization."""
+    if not getattr(lead, 'contacts', None):
+        lead.contacts = None
+        return
+    if isinstance(lead.contacts, list):
+        return
+    try:
+        lead.contacts = json.loads(lead.contacts)
+    except Exception:
+        lead.contacts = []
+
+
+def _normalize_lead_for_response(lead: LeadModel) -> LeadModel:
+    """Coerce nullable DB fields so Pydantic response validation does not fail."""
+    _deserialize_lead_contacts(lead)
+    if lead.contact_name is None:
+        lead.contact_name = ''
+    if lead.company is None:
+        lead.company = ''
+    if lead.email is None:
+        lead.email = ''
+    return lead
+
+
 @api_router.get('/leads', response_model=List[Lead])
 def get_leads(
     status: Optional[str] = None,
@@ -8255,14 +8285,7 @@ def get_leads(
     if assigned_to_employee_id:
         query = query.filter(LeadModel.assigned_to_employee_id == assigned_to_employee_id)
     leads = query.order_by(LeadModel.updated_at.desc()).all()
-    # Deserialize contacts JSON for API response
-    for lead in leads:
-        if hasattr(lead, 'contacts') and lead.contacts:
-            try:
-                lead.contacts = json.loads(lead.contacts)
-            except Exception:
-                lead.contacts = []
-    return leads
+    return [_normalize_lead_for_response(lead) for lead in leads]
 
 @api_router.get('/leads/stats', response_model=LeadStats)
 def get_lead_stats(
@@ -8371,13 +8394,7 @@ def create_lead(
     db.add(new_lead)
     db.commit()
     db.refresh(new_lead)
-    # Deserialize contacts for response
-    if new_lead.contacts:
-        try:
-            new_lead.contacts = json.loads(new_lead.contacts)
-        except Exception:
-            new_lead.contacts = []
-    return new_lead
+    return _normalize_lead_for_response(new_lead)
 
 @api_router.get('/leads/{lead_id}', response_model=Lead)
 def get_lead(
@@ -8388,13 +8405,7 @@ def get_lead(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    # Deserialize contacts JSON for API response
-    if hasattr(lead, 'contacts') and lead.contacts:
-        try:
-            lead.contacts = json.loads(lead.contacts)
-        except Exception:
-            lead.contacts = []
-    return lead
+    return _normalize_lead_for_response(lead)
 
 @api_router.put('/leads/{lead_id}', response_model=Lead)
 def update_lead(
@@ -8445,13 +8456,7 @@ def update_lead(
     
     db.commit()
     db.refresh(lead)
-    # Deserialize contacts for response
-    if lead.contacts:
-        try:
-            lead.contacts = json.loads(lead.contacts)
-        except Exception:
-            lead.contacts = []
-    return lead
+    return _normalize_lead_for_response(lead)
 
 @api_router.delete('/leads/{lead_id}')
 def delete_lead(

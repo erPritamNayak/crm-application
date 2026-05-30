@@ -511,6 +511,13 @@ const NOC_VALID_UPTO_FILTER_OPTIONS = [
   { value: 'expired_or_expiring_90', label: 'Expired or expiring in 90 days' },
 ];
 
+const TELEM_VALID_TO_FILTER_OPTIONS = [
+  { value: '', label: 'All telemetry validity' },
+  { value: 'expired', label: 'Expired (past valid to)' },
+  { value: 'expiring_90', label: 'Expiring in 90 days' },
+  { value: 'expired_or_expiring_90', label: 'Expired or expiring in 90 days' },
+];
+
 function isNocValidUptoExpired(nocValidUptoRaw) {
   const dt = parseGridDate(nocValidUptoRaw);
   if (!dt) return false;
@@ -539,6 +546,9 @@ function matchesNocValidUptoFilter(nocValidUptoRaw, filter) {
   }
   return true;
 }
+
+/** Same rules as NOC valid upto — used for telemetry_valid_to column and filter. */
+const matchesTelemValidToFilter = matchesNocValidUptoFilter;
 
 function RenewalDateCell({ groupEditActive, inlineEditData, groupAnchor, onChange }) {
   const rawForUrgency = groupEditActive ? inlineEditData.renewal_date : groupAnchor.renewal_date;
@@ -584,6 +594,37 @@ function RenewalDateCell({ groupEditActive, inlineEditData, groupAnchor, onChang
       {urgency === 'dueSoon' && (
         <span className="text-[10px] font-medium text-amber-700 leading-tight">Due in ≤30 days</span>
       )}
+    </div>
+  );
+}
+
+/** Single telemetry valid-to date with expired / due-soon styling (per grid row). */
+function TelemValidToCell({ value }) {
+  const tu = value ? renewalUrgency(value) : 'empty';
+  if (!value) {
+    return <span className="text-[11px] text-gray-400">—</span>;
+  }
+  return (
+    <div className="flex flex-col gap-0.5 min-w-[108px]">
+      <p className="text-[11px] font-mono tabular-nums leading-tight">
+        <span
+          className={
+            tu === 'overdue'
+              ? 'text-red-600 font-bold'
+              : tu === 'dueSoon'
+                ? 'text-amber-800 font-semibold'
+                : 'text-gray-800 font-medium'
+          }
+        >
+          {value}
+        </span>
+        {tu === 'overdue' ? (
+          <span className="ml-1 text-[10px] font-bold text-red-600 uppercase tracking-wide">Expired</span>
+        ) : null}
+      </p>
+      {tu === 'dueSoon' ? (
+        <span className="text-[10px] font-medium text-amber-700 leading-tight">≤30 days</span>
+      ) : null}
     </div>
   );
 }
@@ -766,6 +807,7 @@ const CGWFlowMetre = () => {
     FILTER_FIELDS.reduce((acc, key) => ({ ...acc, [key]: '' }), {})
   );
   const [nocValidUptoFilter, setNocValidUptoFilter] = useState('');
+  const [telemValidToFilter, setTelemValidToFilter] = useState('');
   /** Inventory table: wizard-aligned column groups; collapsed groups show one summary column each. */
   const [cgwGridSectionsOpen, setCgwGridSectionsOpen] = useState({
     customer: true,
@@ -1159,11 +1201,12 @@ const CGWFlowMetre = () => {
       });
 
       const matchesNocValidity = matchesNocValidUptoFilter(item.noc_valid_upto, nocValidUptoFilter);
+      const matchesTelemValidity = matchesTelemValidToFilter(item.telemetry_valid_to, telemValidToFilter);
 
-      return matchesGlobal && matchesColumns && matchesNocValidity;
+      return matchesGlobal && matchesColumns && matchesNocValidity && matchesTelemValidity;
     });
     setFilteredItems(filtered);
-  }, [searchTerm, columnFilters, nocValidUptoFilter, items, customerCodeById]);
+  }, [searchTerm, columnFilters, nocValidUptoFilter, telemValidToFilter, items, customerCodeById]);
 
   const totalGroups = groupedItems.length;
   const totalPages = Math.max(1, Math.ceil(totalGroups / pageSize));
@@ -1176,7 +1219,7 @@ const CGWFlowMetre = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, columnFilters, nocValidUptoFilter, pageSize]);
+  }, [searchTerm, columnFilters, nocValidUptoFilter, telemValidToFilter, pageSize]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -2376,6 +2419,23 @@ const CGWFlowMetre = () => {
             </option>
           ))}
         </select>
+        <select
+          value={telemValidToFilter}
+          onChange={(e) => setTelemValidToFilter(e.target.value)}
+          className={cn(
+            'h-9 sm:h-10 rounded-lg border px-2 sm:px-3 text-xs sm:text-sm bg-white text-gray-900 max-w-[220px] sm:max-w-none',
+            telemValidToFilter
+              ? 'border-amber-400 ring-1 ring-amber-200 font-medium'
+              : 'border-gray-300',
+          )}
+          title="Filter by telemetry valid to date"
+        >
+          {TELEM_VALID_TO_FILTER_OPTIONS.map((opt) => (
+            <option key={opt.value || 'all-telem'} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
         <div className="relative">
           <Button
             type="button"
@@ -2453,6 +2513,7 @@ const CGWFlowMetre = () => {
   }, [
     canManage,
     nocValidUptoFilter,
+    telemValidToFilter,
     showColumnFilter,
     selectedFilterField,
     selectedFilterValue,
@@ -3627,7 +3688,12 @@ const CGWFlowMetre = () => {
                       <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">TELEM USER</th>
                       <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">TELEM PASSWORD</th>
                       <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">TELEM VALID FROM</th>
-                      <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">TELEM VALID TO</th>
+                      <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 align-top min-w-[120px] whitespace-normal">
+                        <span className="block leading-snug">TELEM VALID TO</span>
+                        <span className="mt-1 block text-[10px] font-normal text-gray-500 leading-tight">
+                          <span className="text-red-600 font-semibold">Red</span> = expired · <span className="text-amber-700 font-semibold">Amber</span> = ≤30 days
+                        </span>
+                      </th>
                       <th className="text-left py-2.5 px-4 font-semibold text-indigo-900 bg-indigo-50 whitespace-nowrap">PRIOR TELEMETRY</th>
                       <th className="text-left py-2.5 px-4 font-semibold text-fuchsia-900 bg-fuchsia-50/90 whitespace-nowrap">FLOW BW GEO</th>
                       <th className="text-left py-2.5 px-4 font-semibold text-fuchsia-900 bg-fuchsia-50/90 whitespace-nowrap">FLOW CALIBRATION</th>
@@ -3914,7 +3980,9 @@ const CGWFlowMetre = () => {
                           <td className="py-3 px-4 text-gray-600 text-xs bg-indigo-50/35">{item.telemetry_username || '—'}</td>
                           <td className="py-3 px-4 text-gray-600 text-xs bg-indigo-50/35">{item.telemetry_password ? '••••••' : '—'}</td>
                           <td className="py-3 px-4 text-gray-600 whitespace-nowrap font-mono text-[11px] bg-indigo-50/35">{item.telemetry_valid_from || '—'}</td>
-                          <td className="py-3 px-4 text-gray-600 whitespace-nowrap font-mono text-[11px] bg-indigo-50/35">{item.telemetry_valid_to || '—'}</td>
+                          <td className="py-3 px-4 align-top bg-indigo-50/35">
+                            <TelemValidToCell value={item.telemetry_valid_to} />
+                          </td>
                           <td className="py-3 px-4 text-gray-600 text-[10px] bg-indigo-50/35 max-w-[220px]">
                             <span className="line-clamp-4 whitespace-normal" title={formatTelemetryPriorLine(item)}>{formatTelemetryPriorLine(item)}</span>
                           </td>
