@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from typing import List, Optional, Literal, Any, Dict, Tuple
 from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta, date
@@ -2283,12 +2283,21 @@ class Lead(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
 
+# Matches frontend LEAD_SOURCES; stored as plain str (no strict Literal) to avoid 422 on deploy drift.
+LEAD_SOURCE_VALUES = (
+    'India Mart', 'Mail Enquiry', 'Telephonic', 'Whats app', 'Other',
+    'Website', 'Referral', 'Cold Call', 'Social Media', 'Partner', 'Exhibition',
+)
+
+
 class LeadCreate(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     contact_name: str
     company: str
     email: EmailStr
     phone: Optional[str] = None
-    source: Literal['Website', 'Referral', 'Cold Call', 'Social Media', 'Partner', 'Exhibition', 'Other'] = 'Other'
+    source: str = Field(default='Other', max_length=120)
     status: Literal['New', 'Contacted', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'] = 'New'
     value: Optional[float] = None
     notes: Optional[str] = None
@@ -2302,13 +2311,27 @@ class LeadCreate(BaseModel):
     enquiry_date: Optional[str] = None  # YYYY-MM-DD
     contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
 
+    @field_validator('contact_name', 'company', mode='before')
+    @classmethod
+    def strip_text_fields(cls, v):
+        if v is None:
+            return v
+        return str(v).strip()
+
+    @field_validator('source', mode='before')
+    @classmethod
+    def normalize_source(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return 'Other'
+        return str(v).strip()
+
 class LeadUpdate(BaseModel):
     model_config = ConfigDict(extra='ignore')
     contact_name: Optional[str] = None
     company: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
-    source: Optional[Literal['Website', 'Referral', 'Cold Call', 'Social Media', 'Partner', 'Exhibition', 'Other']] = None
+    source: Optional[str] = Field(default=None, max_length=120)
     status: Optional[Literal['New', 'Contacted', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost']] = None
     value: Optional[float] = None
     notes: Optional[str] = None

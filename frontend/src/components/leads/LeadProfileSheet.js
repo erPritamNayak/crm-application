@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { getApiErrorMessage } from '@/lib/apiErrors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -90,7 +91,7 @@ export function LeadProfileSheet({
       setEditing(false);
       onLeadUpdated?.();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Update failed');
+      toast.error(getApiErrorMessage(err, 'Update failed'));
     }
   };
 
@@ -107,7 +108,7 @@ export function LeadProfileSheet({
       toast.success('Activity logged');
       onLeadUpdated?.();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to add activity');
+      toast.error(getApiErrorMessage(err, 'Failed to add activity'));
     }
   };
 
@@ -119,7 +120,7 @@ export function LeadProfileSheet({
       onOpenChange(false);
       onDeleted?.();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Delete failed');
+      toast.error(getApiErrorMessage(err, 'Delete failed'));
     }
   };
 

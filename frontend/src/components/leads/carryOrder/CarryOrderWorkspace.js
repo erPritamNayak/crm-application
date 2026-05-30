@@ -29,6 +29,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { isCarryAndOrder, leadNeedsVendor } from '@/lib/leadUtils';
+import { getApiErrorMessage } from '@/lib/apiErrors';
 
 const inputClass = 'h-9 rounded-lg border-slate-200 text-sm';
 const selectClass =
@@ -62,7 +63,7 @@ export function CarryOrderWorkspace({
       setPayload(mergeWorkflowPayload(data.workflow_payload));
       setActiveTab(data.workflow_stage || 'enquiry_logged');
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to load workflow');
+      toast.error(getApiErrorMessage(err, 'Failed to load workflow'));
     } finally {
       setLoading(false);
     }
@@ -98,7 +99,7 @@ export function CarryOrderWorkspace({
       if (data?.id) onRefresh?.(data.id);
       else onRefresh?.(lead.id);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Save failed');
+      toast.error(getApiErrorMessage(err, 'Save failed'));
     } finally {
       setSaving(false);
     }

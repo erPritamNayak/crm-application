@@ -21,6 +21,7 @@ import {
   isForwardStatusChange,
   getLeadInitials,
 } from '@/lib/leadUtils';
+import { getApiErrorMessage } from '@/lib/apiErrors';
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
@@ -227,7 +228,7 @@ export const Leads = () => {
       fetchLeads();
       fetchStats();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to save vendor');
+      toast.error(getApiErrorMessage(err, 'Failed to save vendor'));
     }
   };
 
@@ -266,7 +267,7 @@ export const Leads = () => {
       fetchLeads();
       fetchStats();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to update stage');
+      toast.error(getApiErrorMessage(err, 'Failed to update stage'));
     }
   };
 

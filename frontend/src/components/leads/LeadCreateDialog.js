@@ -13,6 +13,7 @@ import {
   isCarryAndOrder,
   defaultLeadForm,
 } from '@/lib/leadUtils';
+import { getApiErrorMessage } from '@/lib/apiErrors';
 
 const selectClass =
   'flex h-11 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900';
@@ -64,9 +65,16 @@ export function LeadCreateDialog({
   const submitLead = async () => {
     setSubmitting(true);
     try {
+      const valueRaw = form.value;
       const payload = {
         ...form,
         contact_name: (form.contact_name || '').trim() || form.company,
+        value:
+          valueRaw === '' || valueRaw == null || Number.isNaN(Number(valueRaw))
+            ? null
+            : Number(valueRaw),
+        category: form.category || null,
+        sub_category: form.sub_category || null,
         assigned_to_employee_id: form.assigned_to_employee_id || null,
         assigned_to_name: form.assigned_to_name || null,
         enquiry_date: form.enquiry_date || null,
@@ -91,7 +99,7 @@ export function LeadCreateDialog({
       handleClose(false);
       onCreated?.(created);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to create lead');
+      toast.error(getApiErrorMessage(err, 'Failed to create lead'));
     } finally {
       setSubmitting(false);
     }
