@@ -17,9 +17,10 @@ import {
   newOfferRow,
   newFollowUpRow,
   pipelineStageIndex,
-  resolvedPipelineIndex,
-  isPipelineStageUnlocked,
+  canAccessWorkflowStage,
+  effectivePipelineMaxIndex,
   nextPipelineStageId,
+  newTechnicalAttachmentRef,
   isStageComplete,
   stageIncompleteMessage,
 } from '@/lib/carryOrderWorkflow';
@@ -39,6 +40,7 @@ import {
 } from 'lucide-react';
 import { isCarryAndOrder, leadNeedsVendor } from '@/lib/leadUtils';
 import { getApiErrorMessage } from '@/lib/apiErrors';
+import { CgwMultiFilePicker, normalizeFileList } from '@/components/CgwMultiFilePicker';
 
 const inputClass = 'h-9 rounded-lg border-slate-200 text-sm';
 const selectClass =
@@ -133,11 +135,70 @@ export function CarryOrderWorkspace({
     toast.success('Offer file attached');
   };
 
-  const stageCtx = { isCarryAndOrder, leadNeedsVendor };
-  const pipelineMaxIdx = resolvedPipelineIndex(stage);
+  const uploadTechnicalAttachments = async (pickedFiles) => {
+    const files = normalizeFileList(pickedFiles);
+    if (!files.length || !canEdit) return;
+    setSaving(true);
+    try {
+      const refs = [...(payload.technical_attachments || [])];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const { data } = await axios.post(`${apiBase}/leads/${lead.id}/attachments`, fd, {
+          headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' },
+        });
+        refs.push(newTechnicalAttachmentRef(data));
+      }
+      const nextPayload = { ...payload, technical_attachments: refs };
+      setPayload(nextPayload);
+      const { data } = await axios.put(
+        `${apiBase}/leads/${lead.id}/workflow`,
+        {
+          workflow_stage: stage,
+          workflow_payload: nextPayload,
+          status_change_comment: 'Technical documents attached',
+        },
+        { headers: authHeader() },
+      );
+      setPayload(mergeWorkflowPayload(data.workflow_payload));
+      toast.success(files.length > 1 ? 'Technical documents attached' : 'Technical document attached');
+      onRefresh?.(lead.id);
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeTechnicalAttachment = async (refId) => {
+    const refs = (payload.technical_attachments || []).filter((a) => a.id !== refId);
+    const nextPayload = { ...payload, technical_attachments: refs };
+    setPayload(nextPayload);
+    setSaving(true);
+    try {
+      await axios.put(
+        `${apiBase}/leads/${lead.id}/workflow`,
+        {
+          workflow_stage: stage,
+          workflow_payload: nextPayload,
+          status_change_comment: 'Progress saved',
+        },
+        { headers: authHeader() },
+      );
+      toast.success('Attachment removed');
+    } catch (err) {
+      setPayload(payload);
+      toast.error(getApiErrorMessage(err, 'Remove failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const stageCtx = { isCarryAndOrder, leadNeedsVendor, payload };
+  const pipelineMaxIdx = effectivePipelineMaxIndex(stage, payload);
   const isClosed = WORKFLOW_TERMINAL_IDS.includes(stage);
 
-  const canOpenStage = (stageId) => isPipelineStageUnlocked(stageId, stage);
+  const canOpenStage = (stageId) => canAccessWorkflowStage(stageId, stage, payload);
 
   const canEditStep = (tabId) =>
     canEdit
@@ -148,7 +209,16 @@ export function CarryOrderWorkspace({
   const handleTabSelect = (stageId) => {
     if (!canOpenStage(stageId)) {
       const blocked = CARRY_ORDER_STAGES.find((s) => s.id === stageId);
-      const need = nextPipelineStageId(stage);
+      const techIdx = pipelineStageIndex('technical_clearance');
+      if (
+        payload.technical_approved !== true
+        && pipelineStageIndex(stageId) > techIdx
+        && pipelineMaxIdx <= techIdx
+      ) {
+        toast.error('Select YES on technical clearance to unlock the next steps');
+        return;
+      }
+      const need = WORKFLOW_PIPELINE_IDS[pipelineMaxIdx];
       const needLabel = CARRY_ORDER_STAGES.find((s) => s.id === need)?.label;
       toast.error(
         needLabel
@@ -178,13 +248,10 @@ export function CarryOrderWorkspace({
     }
     const next = nextPipelineStageId(activeTab);
     if (!next) return;
-    let comment;
-    if (next === 'bom_costing' && payload.technical_approved === true) {
-      comment = 'Technical strategy approved — proceeding to BOM';
-    }
-    if (next === 'bom_costing' && payload.technical_approved === false) {
-      comment = 'OTX commercial override — proceeding to BOM';
-    }
+    const comment =
+      next === 'bom_costing' && payload.technical_approved === true
+        ? 'Technical strategy approved — proceeding to BOM'
+        : `Completed ${CARRY_ORDER_STAGES.find((s) => s.id === activeTab)?.label}`;
     saveWorkflow(
       next,
       payload,
@@ -293,7 +360,14 @@ export function CarryOrderWorkspace({
           <ModuleEnquiry lead={lead} attachments={attachments} payload={payload} setPayload={setPayload} canEdit={editActive} />
         )}
         {canOpenStage(activeTab) && activeTab === 'technical_clearance' && (
-          <ModuleTechnical payload={payload} setPayload={setPayload} canEdit={editActive} />
+          <ModuleTechnical
+            payload={payload}
+            setPayload={setPayload}
+            canEdit={editActive}
+            saving={saving}
+            onUploadFiles={uploadTechnicalAttachments}
+            onRemoveAttachment={removeTechnicalAttachment}
+          />
         )}
         {canOpenStage(activeTab) && activeTab === 'bom_costing' && (
           <ModuleBom payload={payload} setPayload={setPayload} bomTotals={bomTotals} canEdit={editActive} />
@@ -322,7 +396,9 @@ export function CarryOrderWorkspace({
             {onCurrentStep
               ? stepComplete
                 ? 'Step requirements met — continue when ready.'
-                : stageIncompleteMessage(activeTab, lead, stageCtx)
+                : activeTab === 'technical_clearance' && payload.technical_approved === false
+                  ? 'Technical not approved (NO) — next steps stay locked until you select YES.'
+                  : stageIncompleteMessage(activeTab, lead, stageCtx)
               : 'Viewing a completed step — save to update details without moving forward.'}
           </p>
           <div className="flex flex-wrap gap-2 shrink-0">
@@ -391,7 +467,7 @@ function ModuleEnquiry({ lead, attachments, payload, setPayload, canEdit }) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label className={labelClass}>Sales owner</Label>
+            <Label className={labelClass}>Assigned user</Label>
             <p className="text-sm font-medium mt-1">{lead.assigned_to_name || lead.created_by_name || '—'}</p>
           </div>
           <div>
@@ -401,17 +477,21 @@ function ModuleEnquiry({ lead, attachments, payload, setPayload, canEdit }) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label className={labelClass}>OTX validity from</Label>
+            <Label className={labelClass}>
+              OTX validity from <span className="font-normal normal-case text-slate-500">(optional)</span>
+            </Label>
             <Input
               type="date"
               className={inputClass}
               disabled={!canEdit}
-              value={payload.otx_date_from || ''}
+              value={payload.otx_date_from || lead.enquiry_date || ''}
               onChange={(e) => setPayload({ ...payload, otx_date_from: e.target.value })}
             />
           </div>
           <div>
-            <Label className={labelClass}>OTX validity to</Label>
+            <Label className={labelClass}>
+              Enquiry validity date <span className="font-normal normal-case text-slate-500">(optional)</span>
+            </Label>
             <Input
               type="date"
               className={inputClass}
@@ -426,12 +506,21 @@ function ModuleEnquiry({ lead, attachments, payload, setPayload, canEdit }) {
   );
 }
 
-function ModuleTechnical({ payload, setPayload, canEdit }) {
+function ModuleTechnical({
+  payload,
+  setPayload,
+  canEdit,
+  saving,
+  onUploadFiles,
+  onRemoveAttachment,
+}) {
+  const saved = payload.technical_attachments || [];
+
   return (
     <section className="space-y-4">
       <SectionTitle
         title="Technical clearance gateway"
-        subtitle="Mandatory filter before BOM costing — per PRD routing rules"
+        subtitle="Only YES unlocks BOM and later steps — attach supporting documents here"
       />
       <div className="rounded-xl border border-slate-200 p-5 space-y-4">
         <Label className={labelClass}>Customer strategy approve technical?</Label>
@@ -462,18 +551,69 @@ function ModuleTechnical({ payload, setPayload, canEdit }) {
           </button>
         </div>
         {payload.technical_approved === false && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Next workflow steps stay locked until technical approval is YES.
+          </p>
+        )}
+        {payload.technical_approved === false && (
           <div>
-            <Label className={labelClass}>Commercial OTX override comment *</Label>
+            <Label className={labelClass}>
+              Commercial / OTX notes <span className="font-normal normal-case text-slate-500">(optional)</span>
+            </Label>
             <textarea
               rows={3}
               disabled={!canEdit}
               value={payload.commercial_otx_comment || ''}
               onChange={(e) => setPayload({ ...payload, commercial_otx_comment: e.target.value })}
-              placeholder="Mandatory when technical approval is NO"
-              className="w-full mt-1 rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-sm"
+              placeholder="Internal notes when technical approval is NO"
+              className="w-full mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
             />
           </div>
         )}
+        <div className="pt-2 border-t border-slate-100">
+          {saved.length > 0 && (
+            <ul className="mb-3 space-y-1">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1">
+                Technical documents
+              </p>
+              {saved.map((att) => (
+                <li key={att.id} className="flex items-center gap-2 text-sm">
+                  <button
+                    type="button"
+                    className="flex-1 flex items-center gap-2 truncate text-left text-indigo-700 hover:underline"
+                    onClick={() => {
+                      if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
+                    }}
+                  >
+                    <FileText className="h-4 w-4 shrink-0" />
+                    {att.file_name || 'File'}
+                  </button>
+                  {canEdit && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-rose-600 hover:text-rose-700"
+                      disabled={saving}
+                      onClick={() => onRemoveAttachment?.(att.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <CgwMultiFilePicker
+            label="Technical clearance attachments"
+            hint="Add drawings, specs, or approval documents (optional)."
+            disabled={!canEdit || saving}
+            files={[]}
+            onChange={(files) => onUploadFiles?.(files)}
+            existingAttachments={null}
+            addLabel="Attach"
+          />
+        </div>
       </div>
     </section>
   );

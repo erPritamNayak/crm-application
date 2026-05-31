@@ -33,12 +33,28 @@ export function resolvedPipelineIndex(workflowStage) {
 }
 
 export function isPipelineStageUnlocked(targetStageId, currentWorkflowStage) {
+  return canAccessWorkflowStage(targetStageId, currentWorkflowStage, null);
+}
+
+/** Max pipeline index reachable given saved stage and technical YES gate. */
+export function effectivePipelineMaxIndex(workflowStage, payload) {
+  const max = resolvedPipelineIndex(workflowStage);
+  const techIdx = pipelineStageIndex('technical_clearance');
+  if (techIdx < 0) return max;
+  if (max > techIdx && payload?.technical_approved !== true) {
+    return techIdx;
+  }
+  return max;
+}
+
+export function canAccessWorkflowStage(targetStageId, workflowStage, payload) {
+  const max = effectivePipelineMaxIndex(workflowStage, payload);
   if (WORKFLOW_TERMINAL_IDS.includes(targetStageId)) {
-    return resolvedPipelineIndex(currentWorkflowStage) >= WORKFLOW_PIPELINE_IDS.length - 1;
+    return max >= WORKFLOW_PIPELINE_IDS.length - 1;
   }
   const targetIdx = pipelineStageIndex(targetStageId);
   if (targetIdx < 0) return false;
-  return targetIdx <= resolvedPipelineIndex(currentWorkflowStage);
+  return targetIdx <= max;
 }
 
 export function nextPipelineStageId(currentWorkflowStage) {
@@ -52,13 +68,8 @@ export function isStageComplete(stageId, payload, lead, { isCarryAndOrder, leadN
     case 'enquiry_logged':
       if (isCarryAndOrder?.(lead)) return !leadNeedsVendor?.(lead);
       return true;
-    case 'technical_clearance': {
-      if (payload.technical_approved === true) return true;
-      if (payload.technical_approved === false) {
-        return Boolean((payload.commercial_otx_comment || '').trim());
-      }
-      return false;
-    }
+    case 'technical_clearance':
+      return payload.technical_approved === true;
     case 'bom_costing':
       return (payload.bom?.materials || []).length > 0;
     case 'offer_revision':
@@ -72,7 +83,7 @@ export function isStageComplete(stageId, payload, lead, { isCarryAndOrder, leadN
   }
 }
 
-export function stageIncompleteMessage(stageId, lead, { isCarryAndOrder, leadNeedsVendor }) {
+export function stageIncompleteMessage(stageId, lead, { isCarryAndOrder, leadNeedsVendor, payload }) {
   switch (stageId) {
     case 'enquiry_logged':
       if (isCarryAndOrder?.(lead) && leadNeedsVendor?.(lead)) {
@@ -80,7 +91,10 @@ export function stageIncompleteMessage(stageId, lead, { isCarryAndOrder, leadNee
       }
       return 'Complete enquiry details';
     case 'technical_clearance':
-      return 'Select YES or NO for technical approval (and add OTX comment if NO)';
+      if (payload?.technical_approved === false) {
+        return 'Technical not approved — select YES to unlock the next workflow steps';
+      }
+      return 'Select YES for technical approval to continue';
     case 'bom_costing':
       return 'Add at least one BOM material line';
     case 'offer_revision':
@@ -107,6 +121,7 @@ export function defaultWorkflowPayload() {
   return {
     technical_approved: null,
     commercial_otx_comment: '',
+    technical_attachments: [],
     otx_date_from: '',
     otx_date_to: '',
     bom: {
@@ -141,6 +156,19 @@ export function mergeWorkflowPayload(stored) {
     bom: { ...base.bom, ...(stored.bom || {}) },
     closed_won: { ...base.closed_won, ...(stored.closed_won || {}) },
     closed_lost: { ...base.closed_lost, ...(stored.closed_lost || {}) },
+    technical_attachments: Array.isArray(stored.technical_attachments)
+      ? stored.technical_attachments
+      : base.technical_attachments,
+  };
+}
+
+export function newTechnicalAttachmentRef(uploaded) {
+  return {
+    id: `ta-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    attachment_id: uploaded?.id || null,
+    file_name: uploaded?.file_name || 'File',
+    file_url: uploaded?.file_url || '',
+    file_type: uploaded?.file_type || null,
   };
 }
 

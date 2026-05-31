@@ -78,6 +78,8 @@ export function LeadCreateDialog({
         assigned_to_employee_id: form.assigned_to_employee_id || null,
         assigned_to_name: form.assigned_to_name || null,
         enquiry_date: form.enquiry_date || null,
+        otx_date_from: form.otx_date_from || form.enquiry_date || null,
+        otx_date_to: form.otx_date_to || null,
         customer_id: customerId || null,
         vendor_id: carryOrder && vendorId ? vendorId : null,
         vendor_name: carryOrder && vendorName ? vendorName : null,
@@ -351,6 +353,37 @@ export function LeadCreateDialog({
           <div className="space-y-2">
             <Label htmlFor="lead-attachment" className={labelClass}>Attachment</Label>
             <Input id="lead-attachment" type="file" onChange={(e) => setAttachment(e.target.files?.[0] || null)} className="h-11" />
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+            <p className="text-sm font-semibold text-gray-800">Enquiry validity (OTX)</p>
+            <p className="text-xs text-gray-500 -mt-2">Optional — shown in the enquiry workflow step. If &quot;from&quot; is empty, enquiry date is used.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="lead-otx-from" className={labelClass}>
+                  OTX validity from <span className="font-normal text-gray-500">(optional)</span>
+                </Label>
+                <Input
+                  id="lead-otx-from"
+                  type="date"
+                  value={form.otx_date_from}
+                  onChange={(e) => setForm({ ...form, otx_date_from: e.target.value })}
+                  className="h-11"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="lead-otx-to" className={labelClass}>
+                  Enquiry validity date <span className="font-normal text-gray-500">(optional)</span>
+                </Label>
+                <Input
+                  id="lead-otx-to"
+                  type="date"
+                  value={form.otx_date_to}
+                  onChange={(e) => setForm({ ...form, otx_date_to: e.target.value })}
+                  className="h-11"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

@@ -2309,6 +2309,8 @@ class LeadCreate(BaseModel):
     vendor_id: Optional[str] = None
     vendor_name: Optional[str] = None
     enquiry_date: Optional[str] = None  # YYYY-MM-DD
+    otx_date_from: Optional[str] = None  # YYYY-MM-DD — OTX validity from (workflow)
+    otx_date_to: Optional[str] = None  # YYYY-MM-DD — enquiry validity / OTX validity to
     contacts: Optional[list] = None  # List of dicts: {name, designation, email, number}
 
     @field_validator('contact_name', 'company', mode='before')
@@ -8359,6 +8361,7 @@ def _default_carry_order_workflow_payload() -> dict:
     return {
         'technical_approved': None,
         'commercial_otx_comment': '',
+        'technical_attachments': [],
         'otx_date_from': '',
         'otx_date_to': '',
         'bom': {
@@ -8551,7 +8554,14 @@ def create_lead(
         contacts=json.dumps(data.contacts) if getattr(data, 'contacts', None) is not None else None
     )
     new_lead.workflow_stage = 'enquiry_logged'
-    new_lead.workflow_payload = json.dumps(_default_carry_order_workflow_payload())
+    wf = _default_carry_order_workflow_payload()
+    otx_from = (getattr(data, 'otx_date_from', None) or '').strip() or (getattr(data, 'enquiry_date', None) or '').strip()
+    otx_to = (getattr(data, 'otx_date_to', None) or '').strip()
+    if otx_from:
+        wf['otx_date_from'] = otx_from
+    if otx_to:
+        wf['otx_date_to'] = otx_to
+    new_lead.workflow_payload = json.dumps(wf)
     db.add(new_lead)
     db.commit()
     db.refresh(new_lead)
@@ -8611,15 +8621,12 @@ def _validate_lead_workflow_transition(
             detail='Assign a vendor before advancing past enquiry (open the lead to complete setup)',
         )
     tech_ok = payload.get('technical_approved')
-    otx_comment = (payload.get('commercial_otx_comment') or '').strip()
-    if new_stage not in ('enquiry_logged',) and tech_ok is False and not otx_comment:
-        raise HTTPException(
-            status_code=400,
-            detail='Commercial OTX override comment is required when technical strategy is not approved',
-        )
     if new_stage in ('bom_costing', 'offer_revision', 'follow_up', 'closed_won', 'closed_lost'):
-        if tech_ok is not True and not otx_comment:
-            raise HTTPException(status_code=400, detail='Complete technical clearance before proceeding')
+        if tech_ok is not True:
+            raise HTTPException(
+                status_code=400,
+                detail='Technical clearance must be approved (YES) before proceeding to the next step',
+            )
     bom = payload.get('bom') or {}
     materials = bom.get('materials') or []
     if new_stage in ('offer_revision', 'follow_up', 'closed_won', 'closed_lost') and len(materials) == 0:
