@@ -15,7 +15,12 @@ import {
   computeOfferTotals,
   buildOfferRevisionEntry,
   latestOfferRevision,
+  agreedOfferRevision,
+  offerRevisionLabel,
+  revisionTotalProfit,
+  revisionAttachments,
   formatInr,
+  newFollowUpRow,
   newMaterialRow,
   pipelineStageIndex,
   canAccessWorkflowStage,
@@ -123,6 +128,15 @@ export function CarryOrderWorkspace({
     }
   };
 
+  const uploadLeadAttachmentFile = async (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const { data } = await axios.post(`${apiBase}/leads/${lead.id}/attachments`, fd, {
+      headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' },
+    });
+    return newTechnicalAttachmentRef(data);
+  };
+
   const uploadTechnicalAttachments = async (pickedFiles) => {
     const files = normalizeFileList(pickedFiles);
     if (!files.length || !canEdit) return;
@@ -223,7 +237,36 @@ export function CarryOrderWorkspace({
       toast.error('This step is not available yet');
       return;
     }
-    saveWorkflow(stage, payload, 'Progress saved');
+    const { pipeline_terminal_confirmed: _c, ...draftPayload } = payload;
+    saveWorkflow(stage, draftPayload, 'Progress saved');
+  };
+
+  const handleClientDecision = async (agreed) => {
+    const revisions = payload.offer_revisions || [];
+    if (!revisions.length) {
+      toast.error('Record at least one offer in Offer & revision first');
+      return;
+    }
+    const revId = payload.agreed_revision_id || revisions[revisions.length - 1]?.id;
+    const agreedRev = agreedOfferRevision(revisions, revId);
+    const nextPayload = {
+      ...payload,
+      client_outcome: agreed ? 'won' : 'lost',
+      agreed_revision_id: agreed ? agreedRev?.id : null,
+      offer_revisions: revisions.map((r) => ({
+        ...r,
+        client_agreed: Boolean(agreed && agreedRev && r.id === agreedRev.id),
+      })),
+    };
+    if (agreed) {
+      nextPayload.closed_won = {
+        ...nextPayload.closed_won,
+        order_value: nextPayload.closed_won?.order_value ?? agreedRev?.offer_value,
+      };
+      await saveWorkflow('closed_won', nextPayload, 'Client agreed — proceeding to Closed Won');
+    } else {
+      await saveWorkflow('closed_lost', nextPayload, 'Client did not agree — proceeding to Closed Lost');
+    }
   };
 
   const completeCurrentStep = () => {
@@ -368,6 +411,9 @@ export function CarryOrderWorkspace({
             offerTotals={offerTotals}
             canEdit={editActive}
             workflowStage={activeTab}
+            uploadLeadFile={uploadLeadAttachmentFile}
+            onClientDecision={handleClientDecision}
+            saving={saving}
           />
         )}
         {canOpenStage(activeTab) && activeTab === 'closed_won' && (
@@ -426,7 +472,9 @@ export function CarryOrderWorkspace({
             size="sm"
             className={activeTab === 'closed_won' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
             disabled={saving}
-            onClick={() => saveWorkflow(activeTab, payload, `Pipeline closed: ${activeTab}`)}
+            onClick={() =>
+              saveWorkflow(activeTab, { ...payload, pipeline_terminal_confirmed: true }, `Pipeline closed: ${activeTab}`)
+            }
           >
             Confirm {activeTab === 'closed_won' ? 'Closed Won' : 'Closed Lost'}
           </Button>
@@ -770,27 +818,60 @@ function ModuleBom({ payload, setPayload, bomTotals, canEdit }) {
   );
 }
 
+function OfferRevisionAttachmentPreview({ rev }) {
+  const files = revisionAttachments(rev);
+  if (!files.length) {
+    return <span className="text-slate-400 text-xs">—</span>;
+  }
+  return (
+    <ul className="space-y-1 min-w-[100px]">
+      {files.map((att) => (
+        <li key={att.id || att.file_url}>
+          <button
+            type="button"
+            onClick={() => {
+              if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
+            }}
+            className="flex items-center gap-1.5 text-left text-indigo-700 hover:text-indigo-900 hover:underline text-xs max-w-[140px]"
+            title={`Preview: ${att.file_name || 'File'}`}
+          >
+            <Eye className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate font-medium">{att.file_name || 'View file'}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ModuleOfferFollowUp({
   payload,
   setPayload,
   offerTotals,
   canEdit,
   workflowStage,
+  uploadLeadFile,
+  onClientDecision,
+  saving: parentSaving,
 }) {
   const revisions = payload.offer_revisions || [];
+  const followUps = payload.follow_ups || [];
   const isFollowUp = workflowStage === 'follow_up';
-  const [draftNotes, setDraftNotes] = React.useState('');
-  const [followUpDraft, setFollowUpDraft] = React.useState(() => ({
+  const isOfferStep = workflowStage === 'offer_revision';
+  const nextRevIndex = revisions.length;
+
+  const [offerDraft, setOfferDraft] = React.useState(() => ({
     date: new Date().toISOString().slice(0, 10),
     comment: '',
-    revised_pct: '',
+    margin_pct: '',
+    pendingFiles: [],
   }));
+  const [recording, setRecording] = React.useState(false);
 
-  const draftTotals = computeOfferTotals(payload.bom, payload.offer_profit_margin_pct);
-  const followUpDraftTotals = computeOfferTotals(payload.bom, followUpDraft.revised_pct);
+  const draftTotals = computeOfferTotals(payload.bom, offerDraft.margin_pct);
 
   const appendRevision = (entry, pct) => {
-    entry.revision_index = revisions.length + 1;
+    entry.revision_index = revisions.length;
     setPayload({
       ...payload,
       offer_revisions: [...revisions, entry],
@@ -798,43 +879,43 @@ function ModuleOfferFollowUp({
     });
   };
 
-  const recordRevision = () => {
-    const pct = Number(payload.offer_profit_margin_pct) || 0;
-    if (pct <= 0) {
-      toast.error('Enter offer profit margin % before recording');
-      return;
-    }
-    const entry = buildOfferRevisionEntry(payload.bom, pct, workflowStage, { notes: draftNotes });
-    appendRevision(entry, pct);
-    setDraftNotes('');
-    toast.success(`Offer revision ${entry.revision_index} recorded`);
-  };
-
-  const recordFollowUpRevision = () => {
-    const pct = Number(followUpDraft.revised_pct) || 0;
-    if (!followUpDraft.date) {
-      toast.error('Enter follow-up date');
-      return;
-    }
-    if (!followUpDraft.comment.trim()) {
-      toast.error('Enter follow-up comment');
+  const recordOfferRevision = async () => {
+    const pct = Number(offerDraft.margin_pct) || 0;
+    if (!offerDraft.date) {
+      toast.error('Enter offer date');
       return;
     }
     if (pct <= 0) {
-      toast.error('Enter revised profit margin %');
+      toast.error('Enter offer profit margin %');
       return;
     }
-    const entry = buildOfferRevisionEntry(payload.bom, pct, 'follow_up', {
-      notes: followUpDraft.comment.trim(),
-      recordedAt: followUpDraft.date,
-    });
-    appendRevision(entry, pct);
-    setFollowUpDraft({
-      date: new Date().toISOString().slice(0, 10),
-      comment: '',
-      revised_pct: '',
-    });
-    toast.success(`Revised offer R${entry.revision_index} added to offer log`);
+    const pending = normalizeFileList(offerDraft.pendingFiles);
+    setRecording(true);
+    try {
+      const attachmentRefs = [];
+      if (pending.length && uploadLeadFile) {
+        for (const file of pending) {
+          attachmentRefs.push(await uploadLeadFile(file));
+        }
+      }
+      const entry = buildOfferRevisionEntry(payload.bom, pct, 'offer_revision', {
+        notes: offerDraft.comment.trim(),
+        recordedAt: offerDraft.date,
+        attachments: attachmentRefs,
+      });
+      appendRevision(entry, pct);
+      setOfferDraft({
+        date: new Date().toISOString().slice(0, 10),
+        comment: '',
+        margin_pct: '',
+        pendingFiles: [],
+      });
+      toast.success(`${offerRevisionLabel(entry.revision_index)} recorded`);
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to record offer'));
+    } finally {
+      setRecording(false);
+    }
   };
 
   const updateRevision = (id, patch) => {
@@ -845,41 +926,45 @@ function ModuleOfferFollowUp({
   };
 
   const removeRevision = (id) => {
-    const next = revisions.filter((r) => r.id !== id).map((r, i) => ({ ...r, revision_index: i + 1 }));
+    const next = revisions.filter((r) => r.id !== id).map((r, i) => ({ ...r, revision_index: i }));
     setPayload({ ...payload, offer_revisions: next });
   };
 
   const revisionLogTable = revisions.length === 0 ? (
     <p className="text-sm text-slate-500 rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
       {isFollowUp
-        ? 'No offer revisions yet — record follow-up details below to add a revised offer.'
-        : 'No offers recorded yet — enter margin % and record the first offer.'}
+        ? 'No offers recorded yet — add offers in the Offer & revision step (R0, R1, …).'
+        : 'No offers yet — record R0, then R1, R2 as you revise.'}
     </p>
   ) : (
     <div className="overflow-x-auto rounded-xl border border-slate-200">
       <table className="w-full text-sm">
         <thead className="bg-slate-100 border-b border-slate-200">
           <tr>
-            <th className="p-2 text-left font-semibold text-slate-700">Rev #</th>
+            <th className="p-2 text-left font-semibold text-slate-700">Offer</th>
             <th className="p-2 text-left font-semibold text-slate-700">Date</th>
             <th className="p-2 text-right font-semibold text-slate-700">Margin %</th>
             <th className="p-2 text-right font-semibold text-slate-700">Offered value</th>
+            <th className="p-2 text-right font-semibold text-slate-700">Total profit</th>
             <th className="p-2 text-left font-semibold text-slate-700">Comment</th>
             <th className="p-2 text-left font-semibold text-slate-700">Calculation</th>
-            {isFollowUp && (
-              <th className="p-2 text-center font-semibold text-slate-700">Client agreed</th>
-            )}
-            {canEdit && <th className="w-8" />}
+            <th className="p-2 text-left font-semibold text-slate-700">Attachment</th>
+            {canEdit && isOfferStep && <th className="w-8" />}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="text-slate-800">
           {revisions.map((rev) => (
             <tr key={rev.id} className="border-t border-slate-100">
-              <td className="p-2 font-medium text-slate-800">R{rev.revision_index}</td>
+              <td className="p-2 font-medium text-slate-800">{offerRevisionLabel(rev.revision_index)}</td>
               <td className="p-2 text-slate-600 whitespace-nowrap">{rev.recorded_at || '—'}</td>
-              <td className="p-2 text-right tabular-nums">{rev.offer_profit_margin_pct}%</td>
+              <td className="p-2 text-right tabular-nums font-medium text-slate-800">
+                {rev.offer_profit_margin_pct}%
+              </td>
               <td className="p-2 text-right tabular-nums font-semibold text-indigo-800">
                 {formatInr(rev.offer_value)}
+              </td>
+              <td className="p-2 text-right tabular-nums font-semibold text-emerald-800">
+                {formatInr(revisionTotalProfit(rev, payload.bom))}
               </td>
               <td className="p-2 text-slate-600 max-w-[180px]">{rev.notes || '—'}</td>
               <td className="p-2 text-slate-500 text-xs max-w-[220px]">
@@ -888,19 +973,10 @@ function ModuleOfferFollowUp({
                     ? `${formatInr(rev.base_after_bom_profit)} ÷ (1 − ${rev.offer_profit_margin_pct}%) = ${formatInr(rev.offer_value)}`
                     : '—')}
               </td>
-              {isFollowUp && (
-                <td className="p-2 text-center">
-                  <input
-                    type="checkbox"
-                    disabled={!canEdit}
-                    checked={Boolean(rev.client_agreed)}
-                    onChange={(e) => updateRevision(rev.id, { client_agreed: e.target.checked })}
-                    className="h-4 w-4"
-                    title="Mark when client agreed to this offer"
-                  />
-                </td>
-              )}
-              {canEdit && (
+              <td className="p-2">
+                <OfferRevisionAttachmentPreview rev={rev} />
+              </td>
+              {canEdit && isOfferStep && (
                 <td className="p-2">
                   <button
                     type="button"
@@ -925,8 +1001,8 @@ function ModuleOfferFollowUp({
           title="Offer revision log"
           subtitle={
             isFollowUp
-              ? 'Each follow-up revision is logged with date, comment, margin %, and calculation'
-              : 'Record the first offer — margin % and offered value are saved per revision'
+              ? 'Offers are recorded in Offer & revision (R0, R1, …) — mark when the client agrees below'
+              : 'Record each offer from R0 onward — margin %, value, and total profit per row'
           }
         />
         <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
@@ -938,57 +1014,83 @@ function ModuleOfferFollowUp({
           </p>
         </div>
 
-        {canEdit && !isFollowUp && (
+        {canEdit && isOfferStep && (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
             <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">
-              {revisions.length === 0 ? 'First offer' : `Revision ${revisions.length + 1}`}
+              {offerRevisionLabel(nextRevIndex)} — {nextRevIndex === 0 ? 'first offer' : 'revised offer'}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <Label className={labelClass}>Offer profit margin (%)</Label>
+                <Label className={labelClass}>Offer date *</Label>
+                <Input
+                  type="date"
+                  value={offerDraft.date}
+                  onChange={(e) => setOfferDraft({ ...offerDraft, date: e.target.value })}
+                  className={`${inputClass} mt-1`}
+                />
+              </div>
+              <div>
+                <Label className={labelClass}>Offer profit margin (%) *</Label>
                 <Input
                   type="number"
                   min="0"
                   max="99.99"
                   step="0.01"
-                  value={payload.offer_profit_margin_pct ?? ''}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    setPayload({
-                      ...payload,
-                      offer_profit_margin_pct: Number.isFinite(v) ? Math.min(Math.max(v, 0), 99.99) : 0,
-                    });
-                  }}
+                  value={offerDraft.margin_pct}
+                  onChange={(e) => setOfferDraft({ ...offerDraft, margin_pct: e.target.value })}
                   className={`${inputClass} mt-1`}
                   placeholder="e.g. 15"
                 />
               </div>
-              <div className="rounded-lg border border-white bg-white px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase text-slate-500">Offered value</p>
-                {draftTotals.offerMarginPct > 0 ? (
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {formatInr(draftTotals.baseAfterBomProfit)} ÷ (1 − {draftTotals.offerMarginPct}%)
-                  </p>
-                ) : null}
-                <p className="text-lg font-bold tabular-nums text-indigo-900 mt-1">
-                  {formatInr(draftTotals.offerValue)}
+            </div>
+            <div className="rounded-lg border border-white bg-white px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase text-slate-500">Offered value</p>
+              {draftTotals.offerMarginPct > 0 ? (
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {formatInr(draftTotals.baseAfterBomProfit)} ÷ (1 − {draftTotals.offerMarginPct}%)
                 </p>
-              </div>
+              ) : null}
+              <p className="text-lg font-bold tabular-nums text-indigo-900 mt-1">
+                {formatInr(draftTotals.offerValue)}
+              </p>
+              {draftTotals.offerMarginPct > 0 && (
+                <p className="text-xs text-emerald-700 mt-1">
+                  Total profit: {formatInr(draftTotals.totalProfit)}
+                </p>
+              )}
             </div>
             <div>
               <Label className={labelClass}>
                 Comment <span className="font-normal normal-case text-slate-500">(optional)</span>
               </Label>
-              <Input
-                value={draftNotes}
-                onChange={(e) => setDraftNotes(e.target.value)}
-                className={`${inputClass} mt-1`}
-                placeholder="e.g. Initial techno-commercial offer sent"
+              <textarea
+                rows={2}
+                value={offerDraft.comment}
+                onChange={(e) => setOfferDraft({ ...offerDraft, comment: e.target.value })}
+                className="w-full mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                placeholder="e.g. Initial offer sent to client"
               />
             </div>
-            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white" onClick={recordRevision}>
-              <Plus className="h-4 w-4 mr-1" />
-              Record offer revision
+            <CgwMultiFilePicker
+              label="Offer attachment"
+              hint="Attach offer PDF or document (optional). Preview from the log table after recording."
+              disabled={recording}
+              files={offerDraft.pendingFiles}
+              onChange={(files) => setOfferDraft({ ...offerDraft, pendingFiles: files })}
+              addLabel="Attach"
+            />
+            <Button
+              size="sm"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              disabled={recording}
+              onClick={recordOfferRevision}
+            >
+              {recording ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-1" />
+              )}
+              Record {offerRevisionLabel(nextRevIndex)}
             </Button>
           </div>
         )}
@@ -996,68 +1098,78 @@ function ModuleOfferFollowUp({
         {revisionLogTable}
       </section>
 
-      {isFollowUp && canEdit && (
+      {isFollowUp && (
         <section className="space-y-4">
           <SectionTitle
-            title="Follow-up & revised offer"
-            subtitle="Enter date, comment, and revised margin — calculation is saved in the offer log above"
+            title="Follow-up notes"
+            subtitle="Log calls and meetings — offers (R0, R1, …) are added only in Offer & revision"
           />
-          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label className={labelClass}>Follow-up date *</Label>
-                <Input
-                  type="date"
-                  value={followUpDraft.date}
-                  onChange={(e) => setFollowUpDraft({ ...followUpDraft, date: e.target.value })}
-                  className={`${inputClass} mt-1`}
-                />
-              </div>
-              <div>
-                <Label className={labelClass}>Revised profit margin (%) *</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  max="99.99"
-                  step="0.01"
-                  value={followUpDraft.revised_pct}
-                  onChange={(e) => setFollowUpDraft({ ...followUpDraft, revised_pct: e.target.value })}
-                  className={`${inputClass} mt-1`}
-                  placeholder="e.g. 12"
-                />
-              </div>
-            </div>
-            <div>
-              <Label className={labelClass}>Follow-up comment *</Label>
-              <textarea
-                rows={2}
-                value={followUpDraft.comment}
-                onChange={(e) => setFollowUpDraft({ ...followUpDraft, comment: e.target.value })}
-                className="w-full mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                placeholder="e.g. Client requested lower margin after price discussion"
-              />
-            </div>
-            {followUpDraftTotals.offerMarginPct > 0 && (
-              <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm text-slate-700">
-                <span className="font-medium text-slate-800">Calculation: </span>
-                {formatInr(followUpDraftTotals.baseAfterBomProfit)} ÷ (1 − {followUpDraftTotals.offerMarginPct}%) ={' '}
-                <span className="font-semibold text-indigo-900">{formatInr(followUpDraftTotals.offerValue)}</span>
-              </div>
-            )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100">
+                <tr>
+                  <th className="p-2 text-left">#</th>
+                  <th className="p-2 text-left">Date</th>
+                  <th className="p-2 text-left">Comment</th>
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody>
+                {followUps.map((fu, idx) => (
+                  <tr key={fu.id} className="border-t border-slate-100">
+                    <td className="p-2 text-slate-500">F{idx + 1}</td>
+                    <td className="p-2">
+                      <Input
+                        type="date"
+                        disabled={!canEdit}
+                        value={fu.follow_up_date}
+                        className={inputClass}
+                        onChange={(e) => {
+                          const next = [...followUps];
+                          next[idx] = { ...fu, follow_up_date: e.target.value };
+                          setPayload({ ...payload, follow_ups: next });
+                        }}
+                      />
+                    </td>
+                    <td className="p-2">
+                      <Input
+                        disabled={!canEdit}
+                        value={fu.notes}
+                        className={inputClass}
+                        onChange={(e) => {
+                          const next = [...followUps];
+                          next[idx] = { ...fu, notes: e.target.value };
+                          setPayload({ ...payload, follow_ups: next });
+                        }}
+                      />
+                    </td>
+                    <td className="p-2">
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPayload({ ...payload, follow_ups: followUps.filter((_, i) => i !== idx) })
+                          }
+                        >
+                          <Trash2 className="h-4 w-4 text-rose-500" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {canEdit && (
             <Button
               size="sm"
-              className="bg-amber-600 hover:bg-amber-700 text-white"
-              onClick={recordFollowUpRevision}
+              variant="outline"
+              onClick={() => setPayload({ ...payload, follow_ups: [...followUps, newFollowUpRow()] })}
             >
-              <Plus className="h-4 w-4 mr-1" />
-              Record revised offer in log
+              <Plus className="h-4 w-4 mr-1" /> Add follow-up note
             </Button>
-          </div>
+          )}
         </section>
-      )}
-
-      {isFollowUp && !canEdit && revisions.length === 0 && (
-        <p className="text-sm text-slate-500">No follow-up revisions recorded.</p>
       )}
     </section>
   );

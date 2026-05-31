@@ -75,7 +75,7 @@ export function isStageComplete(stageId, payload, lead, { isCarryAndOrder, leadN
     case 'offer_revision':
       return (payload.offer_revisions || []).some((r) => (Number(r.offer_profit_margin_pct) || 0) > 0);
     case 'follow_up':
-      return true;
+      return payload.client_outcome === 'won' || payload.client_outcome === 'lost';
     default:
       return true;
   }
@@ -98,7 +98,7 @@ export function stageIncompleteMessage(stageId, lead, { isCarryAndOrder, leadNee
     case 'offer_revision':
       return 'Record at least one offer revision with profit margin %';
     case 'follow_up':
-      return 'Complete follow-up';
+      return 'Record client decision — agreed (Won) or not agreed (Lost)';
     default:
       return 'Complete the previous step first';
   }
@@ -137,6 +137,8 @@ export function defaultWorkflowPayload() {
     offer_revisions: [],
     follow_ups: [],
     offer_profit_margin_pct: 0,
+    client_outcome: null,
+    agreed_revision_id: null,
     closed_won: {
       order_value: null,
       terms: '',
@@ -213,6 +215,21 @@ export function computeBomTotals(bom) {
   };
 }
 
+/** Display label: R0, R1, R2 … */
+export function offerRevisionLabel(revisionIndex) {
+  const n = Number(revisionIndex);
+  return Number.isFinite(n) && n >= 0 ? `R${n}` : 'R0';
+}
+
+export function agreedOfferRevision(revisions, agreedRevisionId) {
+  const list = Array.isArray(revisions) ? revisions : [];
+  if (!list.length) return null;
+  if (agreedRevisionId) {
+    return list.find((r) => r.id === agreedRevisionId) || null;
+  }
+  return list.find((r) => r.client_agreed) || list[list.length - 1];
+}
+
 export function latestOfferRevision(revisions) {
   const list = Array.isArray(revisions) ? revisions : [];
   if (!list.length) return null;
@@ -233,19 +250,30 @@ export function buildOfferRevisionEntry(bom, marginPct, stage = 'offer_revision'
     pct > 0 && baseAfterBomProfit > 0
       ? `${formatInr(baseAfterBomProfit)} ÷ (1 − ${pct}%) = ${formatInr(offerValue)}`
       : '';
+  const consignmentTotal = bomTotals.consignmentTotal;
+  const totalProfit = offerValue - consignmentTotal;
   return {
     id: `or-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    revision_index: 1,
+    revision_index: 0,
     offer_profit_margin_pct: pct,
     base_after_bom_profit: baseAfterBomProfit,
+    consignment_total: consignmentTotal,
     offer_value: offerValue,
     offer_profit_amount: offerProfitAmount,
+    total_profit: totalProfit,
     notes,
     calculation_comment: calculationComment,
     recorded_at: recordedAt,
     stage,
     client_agreed: false,
+    attachments: Array.isArray(opts.attachments) ? opts.attachments : [],
   };
+}
+
+export function revisionAttachments(rev) {
+  if (Array.isArray(rev?.attachments) && rev.attachments.length) return rev.attachments;
+  if (rev?.attachment?.file_url) return [rev.attachment];
+  return [];
 }
 
 export function computeOfferTotals(bom, offerProfitMarginPct) {
@@ -261,7 +289,19 @@ export function computeOfferTotals(bom, offerProfitMarginPct) {
     offerMarginPct: pct,
     offerValue,
     offerProfitAmount,
+    consignmentTotal: bomTotals.consignmentTotal,
+    totalProfit: offerValue - bomTotals.consignmentTotal,
   };
+}
+
+export function revisionTotalProfit(rev, bom) {
+  if (rev?.total_profit != null && !Number.isNaN(Number(rev.total_profit))) {
+    return Number(rev.total_profit);
+  }
+  const offer = Number(rev?.offer_value) || 0;
+  const consignment =
+    Number(rev?.consignment_total) || (bom ? computeBomTotals(bom).consignmentTotal : 0);
+  return offer - consignment;
 }
 
 export function stageIndex(stageId) {
@@ -296,7 +336,7 @@ export function newOfferRow() {
   return {
     id: `o-${Date.now()}`,
     offer_no: '',
-    revision_index: 1,
+    revision_index: 0,
     change_description: '',
     attachment_url: '',
     attachment_name: '',

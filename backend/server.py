@@ -2395,6 +2395,18 @@ class LeadReminderCreate(BaseModel):
     reminder_datetime: datetime
     description: str
 
+class LeadAttachment(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+    id: str
+    lead_id: str
+    file_url: str
+    file_name: str
+    file_type: Optional[str] = None
+    file_size: Optional[int] = None
+    uploaded_by_id: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_at: Optional[datetime] = None
+
 class LeadStats(BaseModel):
     total: int
     by_status: dict
@@ -8379,6 +8391,8 @@ def _default_carry_order_workflow_payload() -> dict:
         'follow_ups': [],
         'offer_profit_margin_pct': 0,
         'offer_revisions': [],
+        'client_outcome': None,
+        'agreed_revision_id': None,
         'closed_won': {
             'order_value': None,
             'terms': '',
@@ -8609,10 +8623,12 @@ def _validate_lead_workflow_transition(
         return
 
     if new_idx > old_idx + 1:
-        raise HTTPException(
-            status_code=400,
-            detail='Complete each workflow step in order before continuing',
-        )
+        terminal_from_follow_up = old_stage == 'follow_up' and new_stage in ('closed_won', 'closed_lost')
+        if not terminal_from_follow_up:
+            raise HTTPException(
+                status_code=400,
+                detail='Complete each workflow step in order before continuing',
+            )
 
     if (
         _is_carry_and_order_subcategory(lead.sub_category)
@@ -8634,20 +8650,22 @@ def _validate_lead_workflow_transition(
     materials = bom.get('materials') or []
     if new_stage in ('offer_revision', 'follow_up', 'closed_won', 'closed_lost') and len(materials) == 0:
         raise HTTPException(status_code=400, detail='Add at least one BOM material line before offer stage')
-    if new_stage == 'closed_won':
-        cw = payload.get('closed_won') or {}
-        required = ['order_value', 'terms', 'packaging_regulations', 'payment_terms', 'warranty_delivery']
-        for field in required:
-            val = cw.get(field)
-            if val is None or (isinstance(val, str) and not str(val).strip()):
-                raise HTTPException(status_code=400, detail=f'Closed Won requires: {field}')
-    if new_stage == 'closed_lost':
-        cl = payload.get('closed_lost') or {}
-        reasons = cl.get('reasons') or []
-        if not reasons:
-            raise HTTPException(status_code=400, detail='Select at least one reason for loss')
-        if 'other' in reasons and not (cl.get('notes') or '').strip():
-            raise HTTPException(status_code=400, detail='Loss explanation notes required when Other is selected')
+    # Won/Lost detail fields are filled on the terminal step after client decision routing.
+    if payload.get('pipeline_terminal_confirmed'):
+        if new_stage == 'closed_won':
+            cw = payload.get('closed_won') or {}
+            required = ['order_value', 'terms', 'packaging_regulations', 'payment_terms', 'warranty_delivery']
+            for field in required:
+                val = cw.get(field)
+                if val is None or (isinstance(val, str) and not str(val).strip()):
+                    raise HTTPException(status_code=400, detail=f'Closed Won requires: {field}')
+        if new_stage == 'closed_lost':
+            cl = payload.get('closed_lost') or {}
+            reasons = cl.get('reasons') or []
+            if not reasons:
+                raise HTTPException(status_code=400, detail='Select at least one reason for loss')
+            if 'other' in reasons and not (cl.get('notes') or '').strip():
+                raise HTTPException(status_code=400, detail='Loss explanation notes required when Other is selected')
 
 
 def _ensure_lead_workflow_initialized(lead: LeadModel, db: Session) -> None:
@@ -8848,6 +8866,65 @@ def get_lead_status_history(
     return db.query(LeadStatusHistoryModel).filter(
         LeadStatusHistoryModel.lead_id == lead_id
     ).order_by(LeadStatusHistoryModel.changed_at.desc()).all()
+
+@api_router.get('/leads/{lead_id}/attachments', response_model=List[LeadAttachment])
+def get_lead_attachments(
+    lead_id: str,
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail='Lead not found')
+    rows = (
+        db.query(LeadAttachmentModel)
+        .filter(LeadAttachmentModel.lead_id == lead_id)
+        .order_by(LeadAttachmentModel.uploaded_at.desc())
+        .all()
+    )
+    return [LeadAttachment.model_validate(r) for r in rows]
+
+
+@api_router.post('/leads/{lead_id}/attachments', response_model=LeadAttachment)
+def add_lead_attachment(
+    lead_id: str,
+    file: UploadFile = File(...),
+    current_user: UserModel = Depends(require_leads_access),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail='Lead not found')
+    if not can_edit_lead(lead, current_user):
+        raise HTTPException(status_code=403, detail='You can only upload attachments for leads you can edit')
+    try:
+        file_content = file.file.read()
+        filename = file.filename or 'attachment'
+        attachment_url = upload_to_s3(file_content, filename, folder='lead_attachments')
+        if not attachment_url:
+            raise HTTPException(
+                status_code=503,
+                detail='File upload service is temporarily unavailable. Please try again in a few moments.',
+            )
+        file_ext = filename.split('.')[-1].lower() if '.' in filename else 'unknown'
+        row = LeadAttachmentModel(
+            lead_id=lead_id,
+            file_name=filename,
+            file_url=attachment_url,
+            file_size=len(file_content),
+            file_type=file_ext,
+            uploaded_by_id=current_user.id,
+            uploaded_by_name=current_user.name,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return LeadAttachment.model_validate(row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @api_router.get('/leads/{lead_id}/reminders', response_model=List[LeadReminder])
 def get_lead_reminders(
