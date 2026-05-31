@@ -105,7 +105,7 @@ export function CarryOrderWorkspace({
     return computeOfferTotals(payload.bom, pct);
   }, [payload.bom, payload.offer_revisions, payload.offer_profit_margin_pct]);
 
-  const saveWorkflow = async (nextStage, nextPayload, comment) => {
+  const saveWorkflow = async (nextStage, nextPayload, comment, successMessage) => {
     if (isCarryAndOrder(lead) && leadNeedsVendor(lead) && nextStage !== 'enquiry_logged') {
       toast.error('Assign a vendor before moving past enquiry');
       onAssignVendor?.(lead);
@@ -126,7 +126,10 @@ export function CarryOrderWorkspace({
       setPayload(mergeWorkflowPayload(data.workflow_payload));
       const savedStage = data.workflow_stage || stage;
       setActiveTab(savedStage);
-      toast.success(comment === 'Progress saved' ? 'Progress saved' : 'Step completed');
+      toast.success(
+        successMessage
+          || (comment === 'Progress saved' ? 'Progress saved' : 'Step completed'),
+      );
       if (data?.id) onRefresh?.(data.id);
       else onRefresh?.(lead.id);
     } catch (err) {
@@ -414,6 +417,9 @@ export function CarryOrderWorkspace({
         )}
         {canOpenStage(activeTab) && (activeTab === 'offer_revision' || activeTab === 'follow_up') && (
           <ModuleOfferFollowUp
+            lead={lead}
+            apiBase={apiBase}
+            authHeader={authHeader}
             payload={payload}
             setPayload={setPayload}
             offerTotals={offerTotals}
@@ -421,6 +427,9 @@ export function CarryOrderWorkspace({
             workflowStage={activeTab}
             uploadLeadFile={uploadLeadAttachmentFile}
             onClientDecision={handleClientDecision}
+            onPersistPayload={(nextPayload, comment, successMessage) =>
+              saveWorkflow(stage, nextPayload, comment, successMessage)
+            }
             saving={saving}
           />
         )}
@@ -857,6 +866,9 @@ function OfferRevisionAttachmentPreview({ rev }) {
 }
 
 function ModuleOfferFollowUp({
+  lead,
+  apiBase,
+  authHeader,
   payload,
   setPayload,
   offerTotals,
@@ -864,6 +876,7 @@ function ModuleOfferFollowUp({
   workflowStage,
   uploadLeadFile,
   onClientDecision,
+  onPersistPayload,
   saving: parentSaving,
 }) {
   const revisions = payload.offer_revisions || [];
@@ -879,6 +892,7 @@ function ModuleOfferFollowUp({
     pendingFiles: [],
   }));
   const [recording, setRecording] = React.useState(false);
+  const [offerRevisionUploadingId, setOfferRevisionUploadingId] = React.useState(null);
   const [followUpUploadingIdx, setFollowUpUploadingIdx] = React.useState(null);
   const [followUpDraft, setFollowUpDraft] = React.useState(() => ({
     date: new Date().toISOString().slice(0, 10),
@@ -890,6 +904,38 @@ function ModuleOfferFollowUp({
 
   const draftTotals = computeOfferTotals(payload.bom, offerDraft.margin_pct);
   const canEditFollowUp = canEdit && isFollowUp;
+
+  const uploadOfferRevisionAttachments = async (revId, pickedFiles) => {
+    const files = normalizeFileList(pickedFiles);
+    if (!files.length || !uploadLeadFile) return;
+    const revIdx = revisions.findIndex((r) => r.id === revId);
+    if (revIdx < 0) return;
+    setOfferRevisionUploadingId(revId);
+    try {
+      const rev = revisions[revIdx];
+      const refs = [...revisionAttachments(rev)];
+      for (const file of files) {
+        refs.push(await uploadLeadFile(file));
+      }
+      const nextRevisions = [...revisions];
+      nextRevisions[revIdx] = { ...rev, attachments: refs };
+      const nextPayload = { ...payload, offer_revisions: nextRevisions };
+      setPayload(nextPayload);
+      if (onPersistPayload) {
+        await onPersistPayload(
+          nextPayload,
+          'Offer attachment added',
+          files.length > 1 ? 'Attachments added' : 'Attachment added',
+        );
+      } else {
+        toast.success(files.length > 1 ? 'Attachments added' : 'Attachment added');
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
+    } finally {
+      setOfferRevisionUploadingId(null);
+    }
+  };
 
   const uploadFollowUpAttachments = async (idx, pickedFiles) => {
     const files = normalizeFileList(pickedFiles);
@@ -950,20 +996,6 @@ function ModuleOfferFollowUp({
 
   const leadOfferBase = resolveLeadOfferBaseNumber(payload, revisions);
 
-  const appendRevision = (entry, pct) => {
-    const idx = revisions.length;
-    entry.revision_index = idx;
-    const base = entry.lead_offer_base || resolveLeadOfferBaseNumber(payload, revisions);
-    entry.lead_offer_base = base;
-    entry.offer_no = formatOfferRevisionNumber(base, idx);
-    setPayload({
-      ...payload,
-      lead_offer_no: base,
-      offer_revisions: [...revisions, entry],
-      offer_profit_margin_pct: pct,
-    });
-  };
-
   const recordOfferRevision = async () => {
     const pct = Number(offerDraft.margin_pct) || 0;
     if (!offerDraft.date) {
@@ -985,6 +1017,10 @@ function ModuleOfferFollowUp({
       }
       let offerBase = resolveLeadOfferBaseNumber(payload, revisions);
       if (!offerBase) {
+        if (!apiBase || !lead?.id) {
+          toast.error('Cannot assign offer number — refresh the page and try again');
+          return;
+        }
         const { data: alloc } = await axios.post(
           `${apiBase}/leads/${lead.id}/allocate-offer-number`,
           {},
@@ -1000,14 +1036,25 @@ function ModuleOfferFollowUp({
         lead_offer_no: offerBase,
         offerBase,
       });
-      appendRevision(entry, pct);
+      const nextPayload = {
+        ...payload,
+        lead_offer_no: entry.lead_offer_base,
+        offer_revisions: [...revisions, entry],
+        offer_profit_margin_pct: pct,
+      };
+      setPayload(nextPayload);
+      if (onPersistPayload) {
+        await onPersistPayload(nextPayload, `${entry.offer_no} recorded`, `${entry.offer_no} recorded`);
+      }
       setOfferDraft({
         date: new Date().toISOString().slice(0, 10),
         comment: '',
         margin_pct: '',
         pendingFiles: [],
       });
-      toast.success(`${entry.offer_no} recorded`);
+      if (!onPersistPayload) {
+        toast.success(`${entry.offer_no} recorded`);
+      }
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Failed to record offer'));
     } finally {
@@ -1206,8 +1253,40 @@ function ModuleOfferFollowUp({
                     ? `${formatInr(rev.base_after_bom_profit)} ÷ (1 − ${rev.offer_profit_margin_pct}%) = ${formatInr(rev.offer_value)}`
                     : '—')}
               </td>
-              <td className="p-2">
+              <td className="p-2 align-top">
                 <OfferRevisionAttachmentPreview rev={rev} />
+                {canEdit && isOfferStep && (
+                  <div className="mt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs text-indigo-700 px-1"
+                      disabled={offerRevisionUploadingId === rev.id || parentSaving}
+                      onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.multiple = true;
+                        input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg';
+                        input.onchange = (e) => {
+                          uploadOfferRevisionAttachments(
+                            rev.id,
+                            e.target.files ? Array.from(e.target.files) : [],
+                          );
+                        };
+                        input.click();
+                      }}
+                    >
+                      {offerRevisionUploadingId === rev.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : revisionAttachments(rev).length ? (
+                        'Add more'
+                      ) : (
+                        'Attach'
+                      )}
+                    </Button>
+                  </div>
+                )}
               </td>
               {canEdit && isOfferStep && (
                 <td className="p-2">
@@ -1215,6 +1294,7 @@ function ModuleOfferFollowUp({
                     type="button"
                     onClick={() => removeRevision(rev.id)}
                     className="text-rose-500 hover:bg-rose-50 p-1 rounded"
+                    aria-label="Remove offer revision"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
