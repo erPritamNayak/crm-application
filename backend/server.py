@@ -8330,20 +8330,39 @@ def check_today_work_log(
     ).first()
     return {'has_logged_today': existing is not None, 'today': today}
 
-# ============= LEADS ROUTES (Admin, Manager, Sales) =============
+# ============= LEADS ROUTES (role permission: leads) =============
 
-def require_leads_access(current_user: UserModel = Depends(get_current_user)):
-    """Allow Admin, Manager, or Sales to access leads (list, create, view)."""
-    if current_user.role not in ['Admin', 'Manager', 'Sales']:
+def user_has_leads_access(current_user: UserModel, db: Session) -> bool:
+    """Admin, legacy Manager/Sales, or any role with the leads screen permission."""
+    if current_user.role == 'Admin':
+        return True
+    if current_user.role in ['Manager', 'Sales']:
+        return True
+    return 'leads' in get_permissions_for_role(db, current_user.role)
+
+
+def require_leads_access(
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not user_has_leads_access(current_user, db):
         raise HTTPException(status_code=403, detail='You do not have access to leads')
     return current_user
 
-def can_edit_lead(lead: LeadModel, current_user: UserModel) -> bool:
-    """Admin/Manager can edit any lead; Sales can edit only leads they created."""
+
+def can_edit_lead(lead: LeadModel, current_user: UserModel, db: Session) -> bool:
+    """Admin/Manager: any lead. Others with leads access: created by or assigned to them."""
     if current_user.role in ['Admin', 'Manager']:
         return True
-    if current_user.role == 'Sales':
-        return lead.created_by_employee_id and str(lead.created_by_employee_id) == str(current_user.employee_id or '')
+    if not user_has_leads_access(current_user, db):
+        return False
+    emp = str(current_user.employee_id or '')
+    if not emp:
+        return False
+    if lead.created_by_employee_id and str(lead.created_by_employee_id) == emp:
+        return True
+    if lead.assigned_to_employee_id and str(lead.assigned_to_employee_id) == emp:
+        return True
     return False
 
 
@@ -8803,7 +8822,7 @@ def allocate_lead_offer_number(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only edit leads created by you')
     _ensure_lead_workflow_initialized(lead, db)
     try:
@@ -8840,7 +8859,7 @@ def update_lead_workflow(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only edit leads created by you')
     _ensure_lead_workflow_initialized(lead, db)
     old_stage = lead.workflow_stage or 'enquiry_logged'
@@ -8896,7 +8915,7 @@ def update_lead(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only edit leads created by you')
     
     update_data = data.model_dump(exclude_unset=True)
@@ -8951,7 +8970,7 @@ def delete_lead(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only delete leads created by you')
     db.query(LeadActivityModel).filter(LeadActivityModel.lead_id == lead_id).delete()
     db.delete(lead)
@@ -8976,7 +8995,7 @@ def add_lead_activity(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only add comments/activities to leads created by you')
     activity = LeadActivityModel(
         lead_id=lead_id,
@@ -9029,7 +9048,7 @@ def add_lead_attachment(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only upload attachments for leads you can edit')
     try:
         file_content = file.file.read()
@@ -9080,7 +9099,7 @@ def add_lead_reminder(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only add reminders to leads created by you')
     
     reminder = LeadReminderModel(
@@ -9107,7 +9126,7 @@ def delete_lead_reminder(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail='Lead not found')
-    if not can_edit_lead(lead, current_user):
+    if not can_edit_lead(lead, current_user, db):
         raise HTTPException(status_code=403, detail='You can only delete reminders from leads created by you')
     
     reminder = db.query(LeadReminderModel).filter(

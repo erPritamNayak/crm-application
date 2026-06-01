@@ -13,6 +13,7 @@ import { LeadVendorDialog } from '@/components/leads/LeadVendorDialog';
 import { LeadStatusDialog } from '@/components/leads/LeadStatusDialog';
 import { LeadProfileSheet } from '@/components/leads/LeadProfileSheet';
 import { LeadWorkflowDialog } from '@/components/leads/LeadWorkflowDialog';
+import { userHasPermission } from '@/lib/permissions';
 import {
   LEAD_SOURCES,
   LEAD_STATUSES,
@@ -73,9 +74,12 @@ export const Leads = () => {
     (lead) => {
       if (!lead || !user) return false;
       if (['Admin', 'Manager'].includes(user.role)) return true;
-      if (user.role === 'Sales') {
-        return String(lead.created_by_employee_id || '') === String(user.employee_id || '');
-      }
+      const empId = String(user.employee_id || '');
+      const isOwn =
+        String(lead.created_by_employee_id || '') === empId
+        || String(lead.assigned_to_employee_id || '') === empId;
+      if (user.role === 'Sales' && isOwn) return true;
+      if (userHasPermission(user, 'leads') && isOwn) return true;
       return false;
     },
     [user],
