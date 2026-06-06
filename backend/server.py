@@ -8429,11 +8429,43 @@ def _resolve_lead_vendor_name(db: Session, vendor_id: Optional[str], vendor_name
     return row.company_name if row else None
 
 
+def _new_vendor_selection_row() -> dict:
+    return {
+        'id': f'vs-{uuid.uuid4().hex[:12]}',
+        'vendor_name': '',
+        'date': '',
+        'enquiry_sent_to_customer': '',
+        'attachments': [],
+        'technical_clearance_from_vendor': None,
+        'technical_clearance_attachments': [],
+        'techno_commercial_offer_attachments': [],
+    }
+
+
+def _vendor_row_complete(row: dict) -> bool:
+    return bool(
+        str(row.get('vendor_name') or '').strip()
+        and str(row.get('date') or '').strip()
+        and str(row.get('enquiry_sent_to_customer') or '').strip()
+        and row.get('technical_clearance_from_vendor') is True
+    )
+
+
+def _vendor_selection_stage_complete(payload: dict) -> bool:
+    """At least one vendor row complete with technical clearance YES from vendor."""
+    if payload.get('technical_approved') is True:
+        return True
+    rows = payload.get('vendor_selections') or []
+    return any(_vendor_row_complete(row) for row in rows)
+
+
 def _default_carry_order_workflow_payload() -> dict:
     return {
         'technical_approved': None,
         'commercial_otx_comment': '',
         'technical_attachments': [],
+        'vendor_selections': [_new_vendor_selection_row()],
+        'bom_attachments': [],
         'otx_date_from': '',
         'otx_date_to': '',
         'bom': {
@@ -8811,12 +8843,11 @@ def _validate_lead_workflow_transition(
             status_code=400,
             detail='Assign a vendor before advancing past enquiry (open the lead to complete setup)',
         )
-    tech_ok = payload.get('technical_approved')
     if new_stage in ('bom_costing', 'offer_revision', 'follow_up', 'closed_won', 'closed_lost'):
-        if tech_ok is not True:
+        if not _vendor_selection_stage_complete(payload):
             raise HTTPException(
                 status_code=400,
-                detail='Technical clearance must be approved (YES) before proceeding to the next step',
+                detail='Complete vendor selection with technical clearance from vendor (YES) before proceeding',
             )
     bom = payload.get('bom') or {}
     materials = bom.get('materials') or []

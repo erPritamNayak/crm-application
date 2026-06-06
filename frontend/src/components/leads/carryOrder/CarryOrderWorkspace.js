@@ -25,6 +25,7 @@ import {
   RTB_OFFER_SEQUENCE_START,
   revisionTotalProfit,
   revisionAttachments,
+  revisionProofOfOfferAttachments,
   followUpAttachments,
   formatInr,
   newFollowUpRow,
@@ -34,6 +35,8 @@ import {
   effectivePipelineMaxIndex,
   nextPipelineStageId,
   newTechnicalAttachmentRef,
+  newVendorSelectionRow,
+  isVendorSelectionComplete,
   isStageComplete,
   stageIncompleteMessage,
 } from '@/lib/carryOrderWorkflow';
@@ -150,12 +153,46 @@ export function CarryOrderWorkspace({
     return newTechnicalAttachmentRef(data);
   };
 
-  const uploadTechnicalAttachments = async (pickedFiles) => {
+  const persistVendorSelections = async (nextSelections, successMessage = 'Progress saved') => {
+    const nextPayload = {
+      ...payload,
+      vendor_selections: nextSelections,
+      technical_approved: isVendorSelectionComplete({ ...payload, vendor_selections: nextSelections })
+        ? true
+        : payload.technical_approved,
+    };
+    setPayload(nextPayload);
+    setSaving(true);
+    try {
+      const { data } = await axios.put(
+        `${apiBase}/leads/${lead.id}/workflow`,
+        {
+          workflow_stage: stage,
+          workflow_payload: nextPayload,
+          status_change_comment: successMessage,
+        },
+        { headers: authHeader() },
+      );
+      setPayload(mergeWorkflowPayload(data.workflow_payload));
+      if (successMessage !== 'Progress saved') toast.success(successMessage);
+      onRefresh?.(lead.id);
+    } catch (err) {
+      setPayload(payload);
+      toast.error(getApiErrorMessage(err, 'Save failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const uploadVendorRowAttachments = async (rowId, pickedFiles) => {
     const files = normalizeFileList(pickedFiles);
     if (!files.length || !canEdit) return;
     setSaving(true);
     try {
-      const refs = [...(payload.technical_attachments || [])];
+      const rows = [...(payload.vendor_selections || [])];
+      const rowIdx = rows.findIndex((r) => r.id === rowId);
+      if (rowIdx < 0) return;
+      const refs = [...(rows[rowIdx].attachments || [])];
       for (const file of files) {
         const fd = new FormData();
         fd.append('file', file);
@@ -164,20 +201,11 @@ export function CarryOrderWorkspace({
         });
         refs.push(newTechnicalAttachmentRef(data));
       }
-      const nextPayload = { ...payload, technical_attachments: refs };
-      setPayload(nextPayload);
-      const { data } = await axios.put(
-        `${apiBase}/leads/${lead.id}/workflow`,
-        {
-          workflow_stage: stage,
-          workflow_payload: nextPayload,
-          status_change_comment: 'Technical documents attached',
-        },
-        { headers: authHeader() },
+      rows[rowIdx] = { ...rows[rowIdx], attachments: refs };
+      await persistVendorSelections(
+        rows,
+        files.length > 1 ? 'Vendor attachments added' : 'Vendor attachment added',
       );
-      setPayload(mergeWorkflowPayload(data.workflow_payload));
-      toast.success(files.length > 1 ? 'Technical documents attached' : 'Technical document attached');
-      onRefresh?.(lead.id);
     } catch (err) {
       toast.error(getApiErrorMessage(err, 'Upload failed'));
     } finally {
@@ -185,28 +213,154 @@ export function CarryOrderWorkspace({
     }
   };
 
-  const removeTechnicalAttachment = async (refId) => {
-    const refs = (payload.technical_attachments || []).filter((a) => a.id !== refId);
-    const nextPayload = { ...payload, technical_attachments: refs };
+  const removeVendorRowAttachment = async (rowId, refId) => {
+    const rows = (payload.vendor_selections || []).map((row) => {
+      if (row.id !== rowId) return row;
+      return {
+        ...row,
+        attachments: (row.attachments || []).filter((a) => a.id !== refId),
+      };
+    });
+    await persistVendorSelections(rows, 'Attachment removed');
+  };
+
+  const uploadVendorRowTechnicalAttachments = async (rowId, pickedFiles) => {
+    const files = normalizeFileList(pickedFiles);
+    if (!files.length || !canEdit) return;
+    setSaving(true);
+    try {
+      const rows = [...(payload.vendor_selections || [])];
+      const rowIdx = rows.findIndex((r) => r.id === rowId);
+      if (rowIdx < 0) return;
+      const refs = [...(rows[rowIdx].technical_clearance_attachments || [])];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const { data } = await axios.post(`${apiBase}/leads/${lead.id}/attachments`, fd, {
+          headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' },
+        });
+        refs.push(newTechnicalAttachmentRef(data));
+      }
+      rows[rowIdx] = { ...rows[rowIdx], technical_clearance_attachments: refs };
+      await persistVendorSelections(
+        rows,
+        files.length > 1 ? 'Technical clearance documents added' : 'Technical clearance document added',
+      );
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeVendorRowTechnicalAttachment = async (rowId, refId) => {
+    const rows = (payload.vendor_selections || []).map((row) => {
+      if (row.id !== rowId) return row;
+      return {
+        ...row,
+        technical_clearance_attachments: (row.technical_clearance_attachments || []).filter(
+          (a) => a.id !== refId,
+        ),
+      };
+    });
+    await persistVendorSelections(rows, 'Technical clearance attachment removed');
+  };
+
+  const uploadVendorRowOfferAttachments = async (rowId, pickedFiles) => {
+    const files = normalizeFileList(pickedFiles);
+    if (!files.length || !canEdit) return;
+    setSaving(true);
+    try {
+      const rows = [...(payload.vendor_selections || [])];
+      const rowIdx = rows.findIndex((r) => r.id === rowId);
+      if (rowIdx < 0) return;
+      const refs = [...(rows[rowIdx].techno_commercial_offer_attachments || [])];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const { data } = await axios.post(`${apiBase}/leads/${lead.id}/attachments`, fd, {
+          headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' },
+        });
+        refs.push(newTechnicalAttachmentRef(data));
+      }
+      rows[rowIdx] = { ...rows[rowIdx], techno_commercial_offer_attachments: refs };
+      await persistVendorSelections(
+        rows,
+        files.length > 1 ? 'Techno commercial offer documents added' : 'Techno commercial offer document added',
+      );
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeVendorRowOfferAttachment = async (rowId, refId) => {
+    const rows = (payload.vendor_selections || []).map((row) => {
+      if (row.id !== rowId) return row;
+      return {
+        ...row,
+        techno_commercial_offer_attachments: (row.techno_commercial_offer_attachments || []).filter(
+          (a) => a.id !== refId,
+        ),
+      };
+    });
+    await persistVendorSelections(rows, 'Techno commercial offer attachment removed');
+  };
+
+  const persistBomAttachments = async (nextAttachments, successMessage = 'Progress saved') => {
+    const nextPayload = { ...payload, bom_attachments: nextAttachments };
     setPayload(nextPayload);
     setSaving(true);
     try {
-      await axios.put(
+      const { data } = await axios.put(
         `${apiBase}/leads/${lead.id}/workflow`,
         {
           workflow_stage: stage,
           workflow_payload: nextPayload,
-          status_change_comment: 'Progress saved',
+          status_change_comment: successMessage,
         },
         { headers: authHeader() },
       );
-      toast.success('Attachment removed');
+      setPayload(mergeWorkflowPayload(data.workflow_payload));
+      if (successMessage !== 'Progress saved') toast.success(successMessage);
+      onRefresh?.(lead.id);
     } catch (err) {
       setPayload(payload);
-      toast.error(getApiErrorMessage(err, 'Remove failed'));
+      toast.error(getApiErrorMessage(err, 'Save failed'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const uploadBomAttachments = async (pickedFiles) => {
+    const files = normalizeFileList(pickedFiles);
+    if (!files.length || !canEdit) return;
+    setSaving(true);
+    try {
+      const refs = [...(payload.bom_attachments || [])];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const { data } = await axios.post(`${apiBase}/leads/${lead.id}/attachments`, fd, {
+          headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' },
+        });
+        refs.push(newTechnicalAttachmentRef(data));
+      }
+      await persistBomAttachments(
+        refs,
+        files.length > 1 ? 'BOM attachments added' : 'BOM attachment added',
+      );
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeBomAttachment = async (refId) => {
+    const refs = (payload.bom_attachments || []).filter((a) => a.id !== refId);
+    await persistBomAttachments(refs, 'BOM attachment removed');
   };
 
   const stageCtx = { isCarryAndOrder, leadNeedsVendor, payload };
@@ -226,11 +380,11 @@ export function CarryOrderWorkspace({
       const blocked = CARRY_ORDER_STAGES.find((s) => s.id === stageId);
       const techIdx = pipelineStageIndex('technical_clearance');
       if (
-        payload.technical_approved !== true
+        !isVendorSelectionComplete(payload)
         && pipelineStageIndex(stageId) > techIdx
         && pipelineMaxIdx <= techIdx
       ) {
-        toast.error('Select YES on technical clearance to unlock the next steps');
+        toast.error('Complete vendor selection to unlock the next steps');
         return;
       }
       const need = WORKFLOW_PIPELINE_IDS[pipelineMaxIdx];
@@ -293,8 +447,8 @@ export function CarryOrderWorkspace({
     const next = nextPipelineStageId(activeTab);
     if (!next) return;
     const comment =
-      next === 'bom_costing' && payload.technical_approved === true
-        ? 'Technical strategy approved — proceeding to BOM'
+      next === 'bom_costing' && isVendorSelectionComplete(payload)
+        ? 'Vendor selection completed — proceeding to BOM'
         : `Completed ${CARRY_ORDER_STAGES.find((s) => s.id === activeTab)?.label}`;
     saveWorkflow(
       next,
@@ -328,7 +482,7 @@ export function CarryOrderWorkspace({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold">Setup pending — vendor not assigned</p>
             <p className="text-xs text-amber-800 mt-0.5">
-              This lead is saved. Assign a vendor below to unlock technical clearance and later stages.
+              This lead is saved. Assign a vendor below to unlock vendor selection and later stages.
             </p>
           </div>
           {canEdit && (
@@ -405,17 +559,30 @@ export function CarryOrderWorkspace({
           <ModuleEnquiry lead={lead} attachments={attachments} payload={payload} setPayload={setPayload} canEdit={editActive} />
         )}
         {canOpenStage(activeTab) && activeTab === 'technical_clearance' && (
-          <ModuleTechnical
+          <ModuleVendorSelection
             payload={payload}
             setPayload={setPayload}
+            vendors={vendors}
             canEdit={editActive}
             saving={saving}
-            onUploadFiles={uploadTechnicalAttachments}
-            onRemoveAttachment={removeTechnicalAttachment}
+            onUploadRowFiles={uploadVendorRowAttachments}
+            onRemoveRowAttachment={removeVendorRowAttachment}
+            onUploadRowTechnicalFiles={uploadVendorRowTechnicalAttachments}
+            onRemoveRowTechnicalAttachment={removeVendorRowTechnicalAttachment}
+            onUploadRowOfferFiles={uploadVendorRowOfferAttachments}
+            onRemoveRowOfferAttachment={removeVendorRowOfferAttachment}
           />
         )}
         {canOpenStage(activeTab) && activeTab === 'bom_costing' && (
-          <ModuleBom payload={payload} setPayload={setPayload} bomTotals={bomTotals} canEdit={editActive} />
+          <ModuleBom
+            payload={payload}
+            setPayload={setPayload}
+            bomTotals={bomTotals}
+            canEdit={editActive}
+            saving={saving}
+            onUploadBomFiles={uploadBomAttachments}
+            onRemoveBomAttachment={removeBomAttachment}
+          />
         )}
         {canOpenStage(activeTab) && (activeTab === 'offer_revision' || activeTab === 'follow_up') && (
           <ModuleOfferFollowUp
@@ -456,8 +623,8 @@ export function CarryOrderWorkspace({
             {onCurrentStep
               ? stepComplete
                 ? 'Step requirements met — continue when ready.'
-                : activeTab === 'technical_clearance' && payload.technical_approved === false
-                  ? 'Technical not approved (NO) — next steps stay locked until you select YES.'
+                : activeTab === 'technical_clearance' && !isVendorSelectionComplete(payload)
+                  ? 'Complete vendor details and set technical clearance from vendor to YES for at least one vendor.'
                   : stageIncompleteMessage(activeTab, lead, stageCtx)
               : 'Viewing a completed step — save to update details without moving forward.'}
           </p>
@@ -568,122 +735,303 @@ function ModuleEnquiry({ lead, attachments, payload, setPayload, canEdit }) {
   );
 }
 
-function ModuleTechnical({
+function ModuleVendorSelection({
   payload,
   setPayload,
+  vendors = [],
   canEdit,
   saving,
-  onUploadFiles,
-  onRemoveAttachment,
+  onUploadRowFiles,
+  onRemoveRowAttachment,
+  onUploadRowTechnicalFiles,
+  onRemoveRowTechnicalAttachment,
+  onUploadRowOfferFiles,
+  onRemoveRowOfferAttachment,
 }) {
-  const saved = payload.technical_attachments || [];
+  const rows = payload.vendor_selections?.length
+    ? payload.vendor_selections
+    : [newVendorSelectionRow()];
+
+  const updateRow = (rowId, patch) => {
+    const next = rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row));
+    setPayload({ ...payload, vendor_selections: next });
+  };
+
+  const addRow = () => {
+    setPayload({ ...payload, vendor_selections: [...rows, newVendorSelectionRow()] });
+  };
+
+  const removeRow = (rowId) => {
+    if (rows.length <= 1) return;
+    setPayload({ ...payload, vendor_selections: rows.filter((row) => row.id !== rowId) });
+  };
+
+  const vendorNames = vendors.map((v) => v.company_name).filter(Boolean);
 
   return (
     <section className="space-y-4">
       <SectionTitle
-        title="Technical clearance gateway"
-        subtitle="Only YES unlocks BOM and later steps — attach supporting documents here"
+        title="Vendor selection"
+        subtitle="Record each vendor — complete details, attach enquiry, and confirm technical clearance from vendor (YES) to continue"
       />
-      <div className="rounded-xl border border-slate-200 p-5 space-y-4">
-        <Label className={labelClass}>Customer strategy approve technical?</Label>
-        <div className="flex gap-3">
-          <button
-            type="button"
-            disabled={!canEdit}
-            onClick={() => setPayload({ ...payload, technical_approved: true })}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border-2 font-semibold text-sm ${
-              payload.technical_approved === true
-                ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                : 'border-slate-200 text-slate-600 hover:border-slate-300'
-            }`}
-          >
-            <CheckCircle2 className="h-5 w-5" /> YES
-          </button>
-          <button
-            type="button"
-            disabled={!canEdit}
-            onClick={() => setPayload({ ...payload, technical_approved: false })}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border-2 font-semibold text-sm ${
-              payload.technical_approved === false
-                ? 'border-rose-400 bg-rose-50 text-rose-800'
-                : 'border-slate-200 text-slate-600 hover:border-slate-300'
-            }`}
-          >
-            <XCircle className="h-5 w-5" /> NO
-          </button>
-        </div>
-        {payload.technical_approved === false && (
-          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Next workflow steps stay locked until technical approval is YES.
-          </p>
-        )}
-        {payload.technical_approved === false && (
-          <div>
-            <Label className={labelClass}>
-              Commercial / OTX notes <span className="font-normal normal-case text-slate-500">(optional)</span>
-            </Label>
-            <textarea
-              rows={3}
-              disabled={!canEdit}
-              value={payload.commercial_otx_comment || ''}
-              onChange={(e) => setPayload({ ...payload, commercial_otx_comment: e.target.value })}
-              placeholder="Internal notes when technical approval is NO"
-              className="w-full mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-            />
-          </div>
-        )}
-        <div className="pt-2 border-t border-slate-100">
-          {saved.length > 0 && (
-            <ul className="mb-3 space-y-1">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1">
-                Technical documents
-              </p>
-              {saved.map((att) => (
-                <li key={att.id} className="flex items-center gap-2 text-sm">
+      <div className="space-y-4">
+        {rows.map((row, index) => {
+          const attachments = row.attachments || [];
+          const technicalAttachments = row.technical_clearance_attachments || [];
+          const offerAttachments = row.techno_commercial_offer_attachments || [];
+          const technicalYes = row.technical_clearance_from_vendor === true;
+          const technicalNo = row.technical_clearance_from_vendor === false;
+          return (
+            <div key={row.id} className="rounded-xl border border-slate-200 p-5 space-y-4 bg-white">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">Vendor {index + 1}</p>
+                {canEdit && rows.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-rose-600 hover:text-rose-700"
+                    onClick={() => removeRow(row.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label className={labelClass}>Vendor name</Label>
+                  <Input
+                    list={vendorNames.length ? `vendor-names-${row.id}` : undefined}
+                    className={inputClass}
+                    disabled={!canEdit}
+                    value={row.vendor_name || ''}
+                    onChange={(e) => updateRow(row.id, { vendor_name: e.target.value })}
+                    placeholder="Enter vendor name"
+                  />
+                  {vendorNames.length > 0 && (
+                    <datalist id={`vendor-names-${row.id}`}>
+                      {vendorNames.map((name) => (
+                        <option key={name} value={name} />
+                      ))}
+                    </datalist>
+                  )}
+                </div>
+                <div>
+                  <Label className={labelClass}>Date of enquiry sent to vendor</Label>
+                  <Input
+                    type="date"
+                    className={inputClass}
+                    disabled={!canEdit}
+                    value={row.date || ''}
+                    onChange={(e) => updateRow(row.id, { date: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className={labelClass}>Enquiry Details sent to Vendor</Label>
+                  <Input
+                    className={inputClass}
+                    disabled={!canEdit}
+                    value={row.enquiry_sent_to_customer || ''}
+                    onChange={(e) => updateRow(row.id, { enquiry_sent_to_customer: e.target.value })}
+                    placeholder="e.g. Yes, sent on email, pending, etc."
+                  />
+                </div>
+              </div>
+              <div className="pt-2 border-t border-slate-100">
+                {attachments.length > 0 && (
+                  <ul className="mb-3 space-y-1">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1">
+                      Attachments
+                    </p>
+                    {attachments.map((att) => (
+                      <li key={att.id} className="flex items-center gap-2 text-sm">
+                        <button
+                          type="button"
+                          className="flex-1 flex items-center gap-2 truncate text-left text-indigo-700 hover:underline"
+                          onClick={() => {
+                            if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
+                          }}
+                        >
+                          <FileText className="h-4 w-4 shrink-0" />
+                          {att.file_name || 'File'}
+                        </button>
+                        {canEdit && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-rose-600 hover:text-rose-700"
+                            disabled={saving}
+                            onClick={() => onRemoveRowAttachment?.(row.id, att.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <CgwMultiFilePicker
+                  label="Attachment of customer enquiry sent to vendor"
+                  accept={LEAD_ATTACHMENT_ACCEPT}
+                  hint={`Supporting documents for this vendor (optional). ${LEAD_ATTACHMENT_HINT}`}
+                  disabled={!canEdit || saving}
+                  files={[]}
+                  onChange={(files) => onUploadRowFiles?.(row.id, files)}
+                  existingAttachments={null}
+                  addLabel="Attach"
+                />
+              </div>
+              <div className="pt-2 border-t border-slate-100 space-y-4">
+                <Label className={labelClass}>Technical clearance from vendor</Label>
+                <div className="flex gap-3">
                   <button
                     type="button"
-                    className="flex-1 flex items-center gap-2 truncate text-left text-indigo-700 hover:underline"
-                    onClick={() => {
-                      if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
-                    }}
+                    disabled={!canEdit}
+                    onClick={() => updateRow(row.id, { technical_clearance_from_vendor: true })}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border-2 font-semibold text-sm ${
+                      technicalYes
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
                   >
-                    <FileText className="h-4 w-4 shrink-0" />
-                    {att.file_name || 'File'}
+                    <CheckCircle2 className="h-5 w-5" /> YES
                   </button>
-                  {canEdit && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-rose-600 hover:text-rose-700"
-                      disabled={saving}
-                      onClick={() => onRemoveAttachment?.(att.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          <CgwMultiFilePicker
-            label="Technical clearance attachments"
-            accept={LEAD_ATTACHMENT_ACCEPT}
-            hint={`Add drawings, specs, or approval documents (optional). ${LEAD_ATTACHMENT_HINT}`}
-            disabled={!canEdit || saving}
-            files={[]}
-            onChange={(files) => onUploadFiles?.(files)}
-            existingAttachments={null}
-            addLabel="Attach"
-          />
-        </div>
+                  <button
+                    type="button"
+                    disabled={!canEdit}
+                    onClick={() =>
+                      updateRow(row.id, {
+                        technical_clearance_from_vendor: false,
+                        technical_clearance_attachments: [],
+                      })
+                    }
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border-2 font-semibold text-sm ${
+                      technicalNo
+                        ? 'border-rose-400 bg-rose-50 text-rose-800'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <XCircle className="h-5 w-5" /> NO
+                  </button>
+                </div>
+                {technicalNo && (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Technical clearance is NO — this vendor will not unlock the next workflow steps. Select YES on
+                    another vendor or change to YES to continue.
+                  </p>
+                )}
+                {technicalYes && (
+                  <div className="space-y-3">
+                    {technicalAttachments.length > 0 && (
+                      <ul className="space-y-1">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1">
+                          Technical clearance documents
+                        </p>
+                        {technicalAttachments.map((att) => (
+                          <li key={att.id} className="flex items-center gap-2 text-sm">
+                            <button
+                              type="button"
+                              className="flex-1 flex items-center gap-2 truncate text-left text-indigo-700 hover:underline"
+                              onClick={() => {
+                                if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
+                              }}
+                            >
+                              <FileText className="h-4 w-4 shrink-0" />
+                              {att.file_name || 'File'}
+                            </button>
+                            {canEdit && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-rose-600 hover:text-rose-700"
+                                disabled={saving}
+                                onClick={() => onRemoveRowTechnicalAttachment?.(row.id, att.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <CgwMultiFilePicker
+                      label="Attachment of technical clearance data"
+                      accept={LEAD_ATTACHMENT_ACCEPT}
+                      hint={`Upload technical clearance documents from vendor. ${LEAD_ATTACHMENT_HINT}`}
+                      disabled={!canEdit || saving}
+                      files={[]}
+                      onChange={(files) => onUploadRowTechnicalFiles?.(row.id, files)}
+                      existingAttachments={null}
+                      addLabel="Attach"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="pt-2 border-t border-slate-100 space-y-3">
+                {offerAttachments.length > 0 && (
+                  <ul className="space-y-1">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1">
+                      Techno commercial offer documents
+                    </p>
+                    {offerAttachments.map((att) => (
+                      <li key={att.id} className="flex items-center gap-2 text-sm">
+                        <button
+                          type="button"
+                          className="flex-1 flex items-center gap-2 truncate text-left text-indigo-700 hover:underline"
+                          onClick={() => {
+                            if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
+                          }}
+                        >
+                          <FileText className="h-4 w-4 shrink-0" />
+                          {att.file_name || 'File'}
+                        </button>
+                        {canEdit && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-rose-600 hover:text-rose-700"
+                            disabled={saving}
+                            onClick={() => onRemoveRowOfferAttachment?.(row.id, att.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <CgwMultiFilePicker
+                  label="Techno commercial offer from vendor"
+                  accept={LEAD_ATTACHMENT_ACCEPT}
+                  hint={`Upload techno commercial offer from vendor (optional). ${LEAD_ATTACHMENT_HINT}`}
+                  disabled={!canEdit || saving}
+                  files={[]}
+                  onChange={(files) => onUploadRowOfferFiles?.(row.id, files)}
+                  existingAttachments={null}
+                  addLabel="Attach"
+                />
+              </div>
+            </div>
+          );
+        })}
+        {canEdit && (
+          <Button type="button" variant="outline" size="sm" className="border-slate-300" onClick={addRow}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add vendor
+          </Button>
+        )}
       </div>
     </section>
   );
 }
 
-function ModuleBom({ payload, setPayload, bomTotals, canEdit }) {
+function ModuleBom({ payload, setPayload, bomTotals, canEdit, saving, onUploadBomFiles, onRemoveBomAttachment }) {
   const bom = payload.bom || {};
+  const bomAttachments = payload.bom_attachments || [];
   const setBom = (patch) => setPayload({ ...payload, bom: { ...bom, ...patch } });
 
   return (
@@ -834,6 +1182,51 @@ function ModuleBom({ payload, setPayload, bomTotals, canEdit }) {
           </>
         )}
       </div>
+      <div className="pt-2 border-t border-slate-200 space-y-3">
+        {bomAttachments.length > 0 && (
+          <ul className="space-y-1">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500 mb-1">
+              BOM & costing documents
+            </p>
+            {bomAttachments.map((att) => (
+              <li key={att.id} className="flex items-center gap-2 text-sm">
+                <button
+                  type="button"
+                  className="flex-1 flex items-center gap-2 truncate text-left text-indigo-700 hover:underline"
+                  onClick={() => {
+                    if (att.file_url) window.open(att.file_url, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  <FileText className="h-4 w-4 shrink-0" />
+                  {att.file_name || 'File'}
+                </button>
+                {canEdit && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-rose-600 hover:text-rose-700"
+                    disabled={saving}
+                    onClick={() => onRemoveBomAttachment?.(att.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <CgwMultiFilePicker
+          label="BOM & costing attachment"
+          accept={LEAD_ATTACHMENT_ACCEPT}
+          hint={`Upload supporting BOM or costing documents (optional). ${LEAD_ATTACHMENT_HINT}`}
+          disabled={!canEdit || saving}
+          files={[]}
+          onChange={(files) => onUploadBomFiles?.(files)}
+          existingAttachments={null}
+          addLabel="Attach"
+        />
+      </div>
     </section>
   );
 }
@@ -868,6 +1261,10 @@ function OfferRevisionAttachmentPreview({ rev }) {
   return <WorkflowAttachmentPreview attachments={revisionAttachments(rev)} />;
 }
 
+function OfferRevisionProofAttachmentPreview({ rev }) {
+  return <WorkflowAttachmentPreview attachments={revisionProofOfOfferAttachments(rev)} />;
+}
+
 function ModuleOfferFollowUp({
   lead,
   apiBase,
@@ -893,9 +1290,11 @@ function ModuleOfferFollowUp({
     comment: '',
     margin_pct: '',
     pendingFiles: [],
+    proofPendingFiles: [],
   }));
   const [recording, setRecording] = React.useState(false);
   const [offerRevisionUploadingId, setOfferRevisionUploadingId] = React.useState(null);
+  const [offerRevisionProofUploadingId, setOfferRevisionProofUploadingId] = React.useState(null);
   const [followUpUploadingIdx, setFollowUpUploadingIdx] = React.useState(null);
   const [followUpDraft, setFollowUpDraft] = React.useState(() => ({
     date: new Date().toISOString().slice(0, 10),
@@ -937,6 +1336,38 @@ function ModuleOfferFollowUp({
       toast.error(getApiErrorMessage(err, 'Upload failed'));
     } finally {
       setOfferRevisionUploadingId(null);
+    }
+  };
+
+  const uploadOfferRevisionProofAttachments = async (revId, pickedFiles) => {
+    const files = normalizeFileList(pickedFiles);
+    if (!files.length || !uploadLeadFile) return;
+    const revIdx = revisions.findIndex((r) => r.id === revId);
+    if (revIdx < 0) return;
+    setOfferRevisionProofUploadingId(revId);
+    try {
+      const rev = revisions[revIdx];
+      const refs = [...revisionProofOfOfferAttachments(rev)];
+      for (const file of files) {
+        refs.push(await uploadLeadFile(file));
+      }
+      const nextRevisions = [...revisions];
+      nextRevisions[revIdx] = { ...rev, proof_of_offer_attachments: refs };
+      const nextPayload = { ...payload, offer_revisions: nextRevisions };
+      setPayload(nextPayload);
+      if (onPersistPayload) {
+        await onPersistPayload(
+          nextPayload,
+          'Proof of offer attachment added',
+          files.length > 1 ? 'Proof attachments added' : 'Proof attachment added',
+        );
+      } else {
+        toast.success(files.length > 1 ? 'Proof attachments added' : 'Proof attachment added');
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
+    } finally {
+      setOfferRevisionProofUploadingId(null);
     }
   };
 
@@ -1010,12 +1441,19 @@ function ModuleOfferFollowUp({
       return;
     }
     const pending = normalizeFileList(offerDraft.pendingFiles);
+    const proofPending = normalizeFileList(offerDraft.proofPendingFiles);
     setRecording(true);
     try {
       const attachmentRefs = [];
+      const proofAttachmentRefs = [];
       if (pending.length && uploadLeadFile) {
         for (const file of pending) {
           attachmentRefs.push(await uploadLeadFile(file));
+        }
+      }
+      if (proofPending.length && uploadLeadFile) {
+        for (const file of proofPending) {
+          proofAttachmentRefs.push(await uploadLeadFile(file));
         }
       }
       let offerBase = resolveLeadOfferBaseNumber(payload, revisions);
@@ -1035,6 +1473,7 @@ function ModuleOfferFollowUp({
         notes: offerDraft.comment.trim(),
         recordedAt: offerDraft.date,
         attachments: attachmentRefs,
+        proof_of_offer_attachments: proofAttachmentRefs,
         existingRevisions: revisions,
         lead_offer_no: offerBase,
         offerBase,
@@ -1054,6 +1493,7 @@ function ModuleOfferFollowUp({
         comment: '',
         margin_pct: '',
         pendingFiles: [],
+        proofPendingFiles: [],
       });
       if (!onPersistPayload) {
         toast.success(`${entry.offer_no} recorded`);
@@ -1096,7 +1536,7 @@ function ModuleOfferFollowUp({
             <th className="p-2 text-left font-semibold text-slate-700">Date</th>
             <th className="p-2 text-left font-semibold text-slate-700">Follow-up through</th>
             <th className="p-2 text-left font-semibold text-slate-700">Comment</th>
-            <th className="p-2 text-left font-semibold text-slate-700">Attachment</th>
+            <th className="p-2 text-left font-semibold text-slate-700">Proof of follow-up attachment</th>
             {canEditFollowUp && <th className="w-8" />}
           </tr>
         </thead>
@@ -1226,7 +1666,8 @@ function ModuleOfferFollowUp({
             <th className="p-2 text-right font-semibold text-slate-700">Total profit</th>
             <th className="p-2 text-left font-semibold text-slate-700">Comment</th>
             <th className="p-2 text-left font-semibold text-slate-700">Calculation</th>
-            <th className="p-2 text-left font-semibold text-slate-700">Attachment</th>
+            <th className="p-2 text-left font-semibold text-slate-700">Offer attachment</th>
+            <th className="p-2 text-left font-semibold text-slate-700">Proof of offer attachment</th>
             {canEdit && isOfferStep && <th className="w-8" />}
           </tr>
         </thead>
@@ -1284,6 +1725,41 @@ function ModuleOfferFollowUp({
                       {offerRevisionUploadingId === rev.id ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : revisionAttachments(rev).length ? (
+                        'Add more'
+                      ) : (
+                        'Attach'
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </td>
+              <td className="p-2 align-top">
+                <OfferRevisionProofAttachmentPreview rev={rev} />
+                {canEdit && isOfferStep && (
+                  <div className="mt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs text-indigo-700 px-1"
+                      disabled={offerRevisionProofUploadingId === rev.id || parentSaving}
+                      onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.multiple = true;
+                        input.accept = LEAD_ATTACHMENT_ACCEPT;
+                        input.onchange = (e) => {
+                          uploadOfferRevisionProofAttachments(
+                            rev.id,
+                            e.target.files ? Array.from(e.target.files) : [],
+                          );
+                        };
+                        input.click();
+                      }}
+                    >
+                      {offerRevisionProofUploadingId === rev.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : revisionProofOfOfferAttachments(rev).length ? (
                         'Add more'
                       ) : (
                         'Attach'
@@ -1413,6 +1889,15 @@ function ModuleOfferFollowUp({
               onChange={(files) => setOfferDraft({ ...offerDraft, pendingFiles: files })}
               addLabel="Attach"
             />
+            <CgwMultiFilePicker
+              label="Proof of offer attachment"
+              accept={LEAD_ATTACHMENT_ACCEPT}
+              hint={`Attach proof of offer document (optional). ${LEAD_ATTACHMENT_HINT}`}
+              disabled={recording}
+              files={offerDraft.proofPendingFiles}
+              onChange={(files) => setOfferDraft({ ...offerDraft, proofPendingFiles: files })}
+              addLabel="Attach"
+            />
             <Button
               size="sm"
               className="bg-indigo-600 hover:bg-indigo-700 text-white"
@@ -1438,7 +1923,7 @@ function ModuleOfferFollowUp({
             title="Follow-up log"
             subtitle={
               isFollowUp
-                ? 'Same layout as offer log — date, channel, comment, and attachment per row'
+                ? 'Same layout as offer log — date, channel, comment, and proof of follow-up attachment per row'
                 : 'Read-only — add follow-ups on the Follow-up step'
             }
           />
@@ -1482,9 +1967,9 @@ function ModuleOfferFollowUp({
                 />
               </div>
               <CgwMultiFilePicker
-                label="Attachment"
+                label="Proof of follow-up attachment"
                 accept={LEAD_ATTACHMENT_ACCEPT}
-                hint={`Optional — preview in the table after adding. ${LEAD_ATTACHMENT_HINT}`}
+                hint={`Optional proof of follow-up — preview in the table after adding. ${LEAD_ATTACHMENT_HINT}`}
                 disabled={addingFollowUp || parentSaving}
                 files={followUpDraft.pendingFiles}
                 onChange={(files) => setFollowUpDraft({ ...followUpDraft, pendingFiles: files })}

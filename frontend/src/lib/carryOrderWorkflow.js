@@ -1,6 +1,6 @@
 export const CARRY_ORDER_STAGES = [
   { id: 'enquiry_logged', label: 'Enquiry', short: '1' },
-  { id: 'technical_clearance', label: 'Technical clearance', short: '2' },
+  { id: 'technical_clearance', label: 'Vendor selection', short: '2' },
   { id: 'bom_costing', label: 'BOM & costing', short: '3' },
   { id: 'offer_revision', label: 'Offer & revision', short: '4' },
   { id: 'follow_up', label: 'Follow-up', short: '5' },
@@ -36,13 +36,29 @@ export function isPipelineStageUnlocked(targetStageId, currentWorkflowStage) {
   return canAccessWorkflowStage(targetStageId, currentWorkflowStage, null);
 }
 
-/** Max pipeline index reachable given saved stage and technical YES gate. */
+function isVendorRowComplete(row) {
+  return (
+    String(row?.vendor_name || '').trim()
+    && String(row?.date || '').trim()
+    && String(row?.enquiry_sent_to_customer || '').trim()
+    && row?.technical_clearance_from_vendor === true
+  );
+}
+
+/** At least one vendor row fully filled with technical clearance YES from vendor. */
+export function isVendorSelectionComplete(payload) {
+  if (payload?.technical_approved === true) return true;
+  const rows = payload?.vendor_selections || [];
+  return rows.some(isVendorRowComplete);
+}
+
+/** Max pipeline index reachable given saved stage and vendor selection gate. */
 export function effectivePipelineMaxIndex(workflowStage, payload) {
   const max = resolvedPipelineIndex(workflowStage);
-  const techIdx = pipelineStageIndex('technical_clearance');
-  if (techIdx < 0) return max;
-  if (max > techIdx && payload?.technical_approved !== true) {
-    return techIdx;
+  const vendorIdx = pipelineStageIndex('technical_clearance');
+  if (vendorIdx < 0) return max;
+  if (max > vendorIdx && !isVendorSelectionComplete(payload)) {
+    return vendorIdx;
   }
   return max;
 }
@@ -69,7 +85,7 @@ export function isStageComplete(stageId, payload, lead, { isCarryAndOrder, leadN
       if (isCarryAndOrder?.(lead)) return !leadNeedsVendor?.(lead);
       return true;
     case 'technical_clearance':
-      return payload.technical_approved === true;
+      return isVendorSelectionComplete(payload);
     case 'bom_costing':
       return (payload.bom?.materials || []).length > 0;
     case 'offer_revision':
@@ -89,10 +105,7 @@ export function stageIncompleteMessage(stageId, lead, { isCarryAndOrder, leadNee
       }
       return 'Complete enquiry details';
     case 'technical_clearance':
-      if (payload?.technical_approved === false) {
-        return 'Technical not approved — select YES to unlock the next workflow steps';
-      }
-      return 'Select YES for technical approval to continue';
+      return 'Add at least one vendor with details filled and technical clearance from vendor set to YES';
     case 'bom_costing':
       return 'Add at least one BOM material line';
     case 'offer_revision':
@@ -125,11 +138,65 @@ export function followUpChannelLabel(channelId) {
   return FOLLOW_UP_CHANNELS.find((c) => c.id === channelId)?.label || channelId || '—';
 }
 
+export function newVendorSelectionRow() {
+  return {
+    id: `vs-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    vendor_name: '',
+    date: '',
+    enquiry_sent_to_customer: '',
+    attachments: [],
+    technical_clearance_from_vendor: null,
+    technical_clearance_attachments: [],
+    techno_commercial_offer_attachments: [],
+  };
+}
+
+function normalizeVendorSelections(stored) {
+  if (Array.isArray(stored?.vendor_selections) && stored.vendor_selections.length) {
+    return stored.vendor_selections.map((row, i) => ({
+      id: row.id || `vs-${i}`,
+      vendor_name: row.vendor_name || '',
+      date: row.date || '',
+      enquiry_sent_to_customer: row.enquiry_sent_to_customer || '',
+      attachments: Array.isArray(row.attachments) ? row.attachments : [],
+      technical_clearance_from_vendor:
+        row.technical_clearance_from_vendor === true
+          ? true
+          : row.technical_clearance_from_vendor === false
+            ? false
+            : null,
+      technical_clearance_attachments: Array.isArray(row.technical_clearance_attachments)
+        ? row.technical_clearance_attachments
+        : [],
+      techno_commercial_offer_attachments: Array.isArray(row.techno_commercial_offer_attachments)
+        ? row.techno_commercial_offer_attachments
+        : [],
+    }));
+  }
+  const legacyAttachments = Array.isArray(stored?.technical_attachments)
+    ? stored.technical_attachments
+    : [];
+  if (stored?.technical_approved === true || legacyAttachments.length) {
+    return [
+      {
+        ...newVendorSelectionRow(),
+        id: 'vs-legacy',
+        attachments: legacyAttachments,
+        technical_clearance_from_vendor: stored.technical_approved === true ? true : null,
+        technical_clearance_attachments: legacyAttachments,
+      },
+    ];
+  }
+  return [newVendorSelectionRow()];
+}
+
 export function defaultWorkflowPayload() {
   return {
     technical_approved: null,
     commercial_otx_comment: '',
     technical_attachments: [],
+    vendor_selections: [newVendorSelectionRow()],
+    bom_attachments: [],
     otx_date_from: '',
     otx_date_to: '',
     bom: {
@@ -176,6 +243,8 @@ export function mergeWorkflowPayload(stored) {
     technical_attachments: Array.isArray(stored.technical_attachments)
       ? stored.technical_attachments
       : base.technical_attachments,
+    vendor_selections: normalizeVendorSelections(stored),
+    bom_attachments: Array.isArray(stored.bom_attachments) ? stored.bom_attachments : base.bom_attachments,
     offer_revisions,
     lead_offer_no,
   };
@@ -379,6 +448,9 @@ export function buildOfferRevisionEntry(bom, marginPct, stage = 'offer_revision'
     stage,
     client_agreed: false,
     attachments: Array.isArray(opts.attachments) ? opts.attachments : [],
+    proof_of_offer_attachments: Array.isArray(opts.proof_of_offer_attachments)
+      ? opts.proof_of_offer_attachments
+      : [],
   };
 }
 
@@ -386,6 +458,10 @@ export function revisionAttachments(rev) {
   if (Array.isArray(rev?.attachments) && rev.attachments.length) return rev.attachments;
   if (rev?.attachment?.file_url) return [rev.attachment];
   return [];
+}
+
+export function revisionProofOfOfferAttachments(rev) {
+  return Array.isArray(rev?.proof_of_offer_attachments) ? rev.proof_of_offer_attachments : [];
 }
 
 export function computeOfferTotals(bom, offerProfitMarginPct) {
