@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, subMonths, addMonths, eachDayOfInterval, getDate, isToday as isTodayDate, isWeekend, subDays } from 'date-fns';
 import { formatISTDate, formatISTDateTime } from '@/utils/date';
+import { presentDayCredit, formatDayCount } from '@/utils/attendanceGridMetrics';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -394,12 +395,8 @@ export const Attendance = () => {
           if (!isFutureDate && !isSunday && !isHoliday) {
             totalDays += 1;
             const rec = emp.records[dateStr];
-            const countsAsPresent =
-              (rec?.is_tour === 1 && rec?.tour_approval_status === 'approved') ||
-              rec?.status === 'Present' ||
-              rec?.status === 'Leave' ||
-              rec?.status === 'Half Day';
-            if (countsAsPresent) presentDays += 1;
+            const credit = presentDayCredit(rec);
+            if (credit > 0) presentDays += credit;
           }
         });
 
@@ -1519,12 +1516,8 @@ export const Attendance = () => {
                             // Count working days as non-future, non-sunday, non-holiday days.
                             if (!isFutureDate && !isSunday && !isHoliday) {
                               totalWorkingDays += 1;
-                              const countsAsPresent =
-                                (record?.is_tour === 1 && record?.tour_approval_status === 'approved') ||
-                                record?.status === 'Present' ||
-                                record?.status === 'Leave' ||
-                                record?.status === 'Half Day';
-                              if (countsAsPresent) presentDays += 1;
+                              const credit = presentDayCredit(record);
+                              if (credit > 0) presentDays += credit;
                               if (record?.status === 'Half Day') halfDayCount += 1;
 
                               // Count tours
@@ -1554,7 +1547,7 @@ export const Attendance = () => {
                             <>
                               {cells}
                               <td className="border-b border-l border-slate-100 bg-slate-50/90 p-2 text-center text-sm font-bold tabular-nums text-slate-800 whitespace-nowrap">
-                                {presentDays} / {totalWorkingDays}
+                                {formatDayCount(presentDays)} / {totalWorkingDays}
                               </td>
                               <td className="border-b border-l border-slate-100 bg-slate-50/90 p-2 text-center text-sm font-bold tabular-nums text-teal-600 whitespace-nowrap">
                                 {halfDayCount}
@@ -2430,10 +2423,10 @@ export const Attendance = () => {
                       <div className="font-medium text-gray-900">{canManageAttendance ? row.employee_name : 'My Attendance'}</div>
                       {canManageAttendance && <div className="text-xs text-gray-500">{row.employee_id}</div>}
                     </td>
-                    <td className="p-3 text-green-700 font-medium">{row.present_days}</td>
+                    <td className="p-3 text-green-700 font-medium">{formatDayCount(row.present_days)}</td>
                     <td className="p-3 text-amber-700 font-medium">{row.late_days}</td>
                     <td className="p-3 text-blue-700 font-medium">{row.half_day_days}</td>
-                    <td className="p-3 text-red-700 font-medium">{row.absent_days}</td>
+                    <td className="p-3 text-red-700 font-medium">{formatDayCount(row.absent_days)}</td>
                     <td className="p-3 text-gray-700 font-medium">{row.total_days}</td>
                   </tr>
                 ))}

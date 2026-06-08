@@ -2133,8 +2133,8 @@ class AttendanceSummary(BaseModel):
     employee_id: str
     employee_name: str
     total_days: int
-    present_days: int
-    absent_days: int
+    present_days: float
+    absent_days: float
     late_days: int
     half_day_days: int
 
@@ -6832,6 +6832,18 @@ def get_attendance(
     return sorted(records, key=lambda x: x.date, reverse=True)
 
 
+def _present_day_credit(record_status: Optional[str], *, is_tour_approved: bool = False) -> float:
+    """Credit toward present/worked days: full day = 1.0, half day = 0.5."""
+    if is_tour_approved:
+        return 1.0
+    st = (record_status or '').strip()
+    if st in ('Present', 'Leave'):
+        return 1.0
+    if st == 'Half Day':
+        return 0.5
+    return 0.0
+
+
 @api_router.get('/attendance/monthly-report')
 def get_attendance_monthly_report(
     month: str,
@@ -7008,12 +7020,9 @@ def get_attendance_monthly_report(
             )
         tw_raw = float(record.total_work_hours or 0.0)
         wh = float(record.work_hours or 0.0)
-        # Keep worked_days aligned with Attendance Grid / Summary "present-day" logic:
-        counts_as_worked_day = (
-            (record.status == 'Present')
-            or (record.status == 'Half Day')
-            or (has_tour and tour_approved)
-        )
+        st = (record.status or '').strip()
+        day_credit = _present_day_credit(st, is_tour_approved=has_tour and tour_approved)
+        counts_as_worked_day = (st == 'Present') or (has_tour and tour_approved)
         # Regularized Present rows historically could have work_hours set but total_work_hours still 0.
         if tw_raw > 0:
             hours_for_day = tw_raw
@@ -7023,10 +7032,9 @@ def get_attendance_monthly_report(
             hours_for_day = tw_raw
         total_work_sum += hours_for_day
 
-        if counts_as_worked_day:
-            worked_days += 1
+        if day_credit > 0:
+            worked_days += day_credit
 
-        st = (record.status or '').strip()
         if st == 'Half Day':
             grid_status = 'Half Day'
             half_day_days += 1
@@ -7069,7 +7077,7 @@ def get_attendance_monthly_report(
         'days': days_out,
         'avg_hours_per_worked_day': avg_hours,
         'total_work_hours': round(total_work_sum, 2),
-        'worked_days': worked_days,
+        'worked_days': round(worked_days, 1),
         'half_day_days': half_day_days,
     }
 
@@ -7270,17 +7278,15 @@ def get_attendance_summary(month: str, current_user: UserModel = Depends(get_cur
             continue  # pending or rejected tour: do not count as present
         st = record.status
         # Only fully approved / completed days count as present
-        if st == 'Present':
-            data['present_days'] += 1
-        elif st == 'Leave':
-            # Approved leave is treated as a worked day for monthly totals
-            data['present_days'] += 1
+        tour_ok = getattr(record, 'is_tour', 0) == 1 and getattr(record, 'tour_approval_status', None) == 'approved'
+        credit = _present_day_credit(st, is_tour_approved=tour_ok)
+        if credit > 0:
+            data['present_days'] += credit
+        if st == 'Half Day':
+            data['half_day_days'] += 1
         elif st == 'Late':
             # Late punch-in pending admin approval — not counted as present until approved
             data['late_days'] += 1
-        elif st == 'Half Day':
-            data['present_days'] += 1
-            data['half_day_days'] += 1
         # Incomplete, Pending Approval, Absent, Leave: do not increment present
 
     for data in summary_map.values():
@@ -10025,10 +10031,11 @@ def get_salary_overview(
         if not emp_id:
             continue
         per_date = records_by_employee.get(emp_id, {})
-        present_days = 0
+        present_days = 0.0
         total_working_days = 0
         tour_days = 0
         late_days = 0
+        half_day_days = 0
 
         for day in range(1, monthrange(year, month_num)[1] + 1):
             dt = date(year, month_num, day)
@@ -10040,13 +10047,13 @@ def get_salary_overview(
             if not is_future and not is_sunday and not is_holiday:
                 total_working_days += 1
                 rec = per_date.get(date_str)
-                counts_as_present = (
-                    (getattr(rec, 'is_tour', 0) == 1 and getattr(rec, 'tour_approval_status', None) == 'approved')
-                    or getattr(rec, 'status', None) in ['Present', 'Leave']
-                )
-                if counts_as_present:
-                    present_days += 1
-                if getattr(rec, 'is_tour', 0) == 1 and getattr(rec, 'tour_approval_status', None) == 'approved':
+                tour_ok = getattr(rec, 'is_tour', 0) == 1 and getattr(rec, 'tour_approval_status', None) == 'approved'
+                credit = _present_day_credit(getattr(rec, 'status', None), is_tour_approved=tour_ok)
+                if credit > 0:
+                    present_days += credit
+                if getattr(rec, 'status', None) == 'Half Day':
+                    half_day_days += 1
+                if tour_ok:
                     tour_days += 1
 
         for rec in per_date.values():
@@ -10071,7 +10078,7 @@ def get_salary_overview(
             'absent_days': max(total_working_days - present_days, 0),
             'working_days': total_working_days,
             'late_days': late_days,
-            'half_day_days': 0,
+            'half_day_days': half_day_days,
             'tour_days': tour_days
         }
 
@@ -10214,12 +10221,10 @@ def generate_payslip(
         rec = records_by_date.get(ds)
         if not rec:
             continue
-        counts_as_present = (
-            (getattr(rec, 'is_tour', 0) == 1 and getattr(rec, 'tour_approval_status', None) == 'approved')
-            or getattr(rec, 'status', None) in ['Present', 'Leave']
-        )
-        if counts_as_present:
-            present_days += 1
+        tour_ok = getattr(rec, 'is_tour', 0) == 1 and getattr(rec, 'tour_approval_status', None) == 'approved'
+        credit = _present_day_credit(getattr(rec, 'status', None), is_tour_approved=tour_ok)
+        if credit > 0:
+            present_days += credit
 
     absent_days = max(working_days - present_days, 0)
     total_hours = sum(float(rec.work_hours or 0) for rec in attendance_records)

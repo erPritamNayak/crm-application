@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
+import { formatDayCount } from '@/utils/attendanceGridMetrics';
 import { toast } from 'sonner';
 import {
   BarChart,
@@ -367,7 +368,8 @@ export const MonthlyReport = () => {
                     Total hours: <strong className="text-gray-900 tabular-nums">{data?.total_work_hours ?? 0}</strong> h
                   </span>
                   <span>
-                    Worked days: <strong className="text-gray-900 tabular-nums">{data?.worked_days ?? 0}</strong>
+                    Worked days:{' '}
+                    <strong className="text-gray-900 tabular-nums">{formatDayCount(data?.worked_days ?? 0)}</strong>
                   </span>
                   <span>
                     Half days: <strong className="text-gray-900 tabular-nums">{data?.half_day_days ?? 0}</strong>

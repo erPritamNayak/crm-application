@@ -3,6 +3,23 @@ import { eachDayOfInterval, endOfMonth, format } from 'date-fns';
 /** Same threshold as Attendance grid / summary tab (10:30). */
 const LATE_THRESHOLD_MINUTES = 10 * 60 + 30;
 
+/** Present-day credit: full day = 1, half day = 0.5. */
+export const presentDayCredit = (record) => {
+  if (!record) return 0;
+  if (record.is_tour === 1 && record.tour_approval_status === 'approved') return 1;
+  const status = record.status;
+  if (status === 'Present' || status === 'Leave') return 1;
+  if (status === 'Half Day') return 0.5;
+  return 0;
+};
+
+export const formatDayCount = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  const rounded = Math.round(n * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+};
+
 /**
  * Group raw `/attendance?month=` rows by `employee_id` with `records[date]` shape
  * (matches Attendance grid `gridData`).
@@ -61,12 +78,8 @@ export function computePresentWorkingAbsentForMonth(recordsByDate, monthStr, hol
 
     if (!isFutureDate && !isSunday && !isHoliday) {
       totalWorkingDays += 1;
-      const countsAsPresent =
-        (record?.is_tour === 1 && record?.tour_approval_status === 'approved') ||
-        record?.status === 'Present' ||
-        record?.status === 'Leave' ||
-        record?.status === 'Half Day';
-      if (countsAsPresent) presentDays += 1;
+      const credit = presentDayCredit(record);
+      if (credit > 0) presentDays += credit;
       if (record?.status === 'Half Day') halfDayDays += 1;
       if (record?.is_tour === 1 && record?.tour_approval_status === 'approved') {
         tourDays += 1;
