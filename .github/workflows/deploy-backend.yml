@@ -26,5 +26,5 @@ jobs:
             sleep 2
             sudo nohup python3 -m uvicorn server:app --host 0.0.0.0 --port 80 > /tmp/uvicorn.log 2>&1 &
             sleep 3
-            curl -s http://localhost/docs > /dev/null && echo "Server is running" || echo "Server check"
-            echo "Deploy complete"
+            ps aux | grep uvicorn
+            echo "Done"
