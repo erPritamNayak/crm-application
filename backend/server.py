@@ -10657,7 +10657,9 @@ def upload_vehicle_photo(
         
         return {'photo_path': photo_path, 'message': 'Vehicle photo uploaded successfully'}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logging.exception('Error uploading vehicle photo for vehicle_id=%s', vehicle_id)
+        # Return 500 so client sees a server error; details are in logs for debugging
+        raise HTTPException(status_code=500, detail='Internal server error during file upload')
 
 # ============= VEHICLE USAGE ROUTES =============
 
