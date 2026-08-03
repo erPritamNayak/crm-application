@@ -8956,6 +8956,37 @@ def create_lead_category(
     return _serialize_lead_category(cat, [])
 
 
+@api_router.put('/lead-categories/{category_id}', response_model=LeadCategoryOut)
+def update_lead_category(
+    category_id: str,
+    body: LeadCategoryCreate,
+    current_user: UserModel = Depends(require_admin_console),
+    db: Session = Depends(get_db),
+):
+    cat = db.query(LeadCategoryModel).filter(LeadCategoryModel.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail='Category not found')
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail='Category name is required')
+    if name != cat.name:
+        duplicate = db.query(LeadCategoryModel).filter(
+            LeadCategoryModel.name == name,
+            LeadCategoryModel.id != category_id,
+        ).first()
+        if duplicate:
+            raise HTTPException(status_code=400, detail='Category already exists')
+        old_name = cat.name
+        cat.name = name
+        db.query(LeadModel).filter(LeadModel.category == old_name).update(
+            {LeadModel.category: name}, synchronize_session=False
+        )
+    db.commit()
+    db.refresh(cat)
+    subs = db.query(LeadSubCategoryModel).filter(LeadSubCategoryModel.category_id == category_id).all()
+    return _serialize_lead_category(cat, subs)
+
+
 @api_router.delete('/lead-categories/{category_id}')
 def delete_lead_category(
     category_id: str,
@@ -9000,6 +9031,45 @@ def create_lead_subcategory(
         sort_order=int(max_sort) + 1,
     )
     db.add(sub)
+    db.commit()
+    db.refresh(sub)
+    return {'id': sub.id, 'name': sub.name, 'sort_order': sub.sort_order or 0}
+
+
+@api_router.put('/lead-categories/{category_id}/subcategories/{subcategory_id}', response_model=LeadSubCategoryOut)
+def update_lead_subcategory(
+    category_id: str,
+    subcategory_id: str,
+    body: LeadSubCategoryCreate,
+    current_user: UserModel = Depends(require_admin_console),
+    db: Session = Depends(get_db),
+):
+    cat = db.query(LeadCategoryModel).filter(LeadCategoryModel.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail='Category not found')
+    sub = db.query(LeadSubCategoryModel).filter(
+        LeadSubCategoryModel.id == subcategory_id,
+        LeadSubCategoryModel.category_id == category_id,
+    ).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail='Subcategory not found')
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail='Subcategory name is required')
+    if name != sub.name:
+        duplicate = db.query(LeadSubCategoryModel).filter(
+            LeadSubCategoryModel.category_id == category_id,
+            LeadSubCategoryModel.name == name,
+            LeadSubCategoryModel.id != subcategory_id,
+        ).first()
+        if duplicate:
+            raise HTTPException(status_code=400, detail='Subcategory already exists in this category')
+        old_name = sub.name
+        sub.name = name
+        db.query(LeadModel).filter(
+            LeadModel.category == cat.name,
+            LeadModel.sub_category == old_name,
+        ).update({LeadModel.sub_category: name}, synchronize_session=False)
     db.commit()
     db.refresh(sub)
     return {'id': sub.id, 'name': sub.name, 'sort_order': sub.sort_order or 0}
