@@ -29,6 +29,7 @@ import {
   BarChart3,
   BookOpen,
   Wallet,
+  Terminal,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { PageHeaderProvider, usePageHeader, usePageHeaderActions } from '@/contexts/PageHeaderContext';
@@ -199,6 +200,7 @@ export const Layout = () => {
       label: 'Admin',
       items: [
         { icon: Shield, label: 'Roles', path: '/roles', permission: 'roles' },
+        { icon: Terminal, label: 'Admin Console', path: '/admin-console', allowedRoles: ['Admin'] },
         { icon: Settings, label: 'Settings', path: '/settings', permission: 'settings' },
       ],
     },
