@@ -6,6 +6,7 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -18,8 +19,9 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 20m
+          command_timeout: 25m
           script: |
+            set -e
             cd /home/ec2-user/crm-application
             git fetch origin main
             git reset --hard origin/main
@@ -43,8 +45,8 @@ jobs:
             set_env_var TELEGRAM_WEBHOOK_SECRET "${{ secrets.TELEGRAM_WEBHOOK_SECRET }}"
             set_env_var TELEGRAM_CHAT_ID "${{ secrets.TELEGRAM_CHAT_ID }}"
             set_env_var TELEGRAM_ADMIN_CHAT_ID "${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}"
-            # Keep polling off during recovery if it was causing instability; outbound notify still works
-            set_env_var TELEGRAM_MODE "polling"
+            # Recover API first: outbound Telegram notify still works without polling
+            set_env_var TELEGRAM_MODE "off"
             set_env_var TELEGRAM_APPROVER_EMPLOYEE_ID "${{ secrets.TELEGRAM_APPROVER_EMPLOYEE_ID }}"
             if ! grep -q '^TELEGRAM_APPROVER_EMPLOYEE_ID=' .env 2>/dev/null; then
               echo 'TELEGRAM_APPROVER_EMPLOYEE_ID=EMP0005' >> .env
@@ -55,28 +57,47 @@ jobs:
 
             pip3 install -r requirements.txt --quiet
 
+            echo "=== unit file ==="
+            systemctl cat uvicorn --no-pager || true
+            echo "=== stop old process ==="
             sudo systemctl stop uvicorn || true
             sleep 2
+            sudo fuser -k 8000/tcp 2>/dev/null || true
+            sleep 1
+
+            echo "=== import smoke test ==="
+            python3 -c "import server; print('import_ok')" || {
+              echo "IMPORT FAILED"
+              python3 -c "import traceback; traceback.print_exc()" || true
+              exit 1
+            }
+
             sudo systemctl start uvicorn
-            # App import/migrations can take a while
-            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            sudo systemctl restart nginx || sudo systemctl restart httpd || true
+
+            healthy=0
+            for i in $(seq 1 24); do
               if curl -sf -o /dev/null http://127.0.0.1:8000/docs; then
                 echo "uvicorn healthy after ${i} attempts"
+                healthy=1
                 break
               fi
               echo "waiting for uvicorn... $i"
               sleep 5
-              if [ "$i" = "12" ]; then
-                echo "uvicorn failed to become healthy"
-                sudo systemctl status uvicorn --no-pager || true
-                sudo journalctl -u uvicorn -n 120 --no-pager || true
-                ss -lntp | grep -E '8000|nginx' || true
-                exit 1
+              if ! systemctl is-active --quiet uvicorn; then
+                echo "uvicorn service not active — restarting"
+                sudo systemctl start uvicorn || true
               fi
             done
 
-            sudo systemctl restart nginx || sudo systemctl restart httpd || true
-            sleep 2
+            if [ "$healthy" != "1" ]; then
+              echo "uvicorn failed to become healthy"
+              sudo systemctl status uvicorn --no-pager || true
+              sudo journalctl -u uvicorn -n 200 --no-pager || true
+              ss -lntp | grep -E '8000|nginx|httpd' || true
+              exit 1
+            fi
+
             curl -sf -o /dev/null -w "localhost_docs %{http_code}\n" http://127.0.0.1:8000/docs
             ss -lntp | grep -E ':8000|:80|:443' || true
             grep -n "_notify_task_assigned_telegram" server.py | head -3 || true
