@@ -17,11 +17,11 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
+            script: |
             cd /home/ec2-user/crm-application
-            git stash
-            git pull origin main
-            git stash pop || true
+            # Hard sync to origin/main so local stash/conflict cannot leave stale server.py
+            git fetch origin main
+            git reset --hard origin/main
             cd backend
 
             # Ensure Telegram bot config is present in .env (never committed to git — sourced from
@@ -57,3 +57,7 @@ jobs:
 
             pip3 install -r requirements.txt --quiet
             sudo systemctl restart uvicorn
+            sleep 2
+            sudo systemctl is-active uvicorn
+            # Confirm task-notify helper exists in the running tree
+            grep -n "_notify_task_assigned_telegram" server.py | head -3
