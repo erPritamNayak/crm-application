@@ -3578,32 +3578,28 @@ def _notify_task_assigned_telegram(
     assigned_by_name: str,
     *,
     previous_assignee_id: Optional[str] = None,
-) -> bool:
-    """Notify the assignee on Telegram when a task is created or reassigned to them.
+) -> None:
+    """Notify the assignee on Telegram when a task is created or reassigned to them."""
+    assignee_id = getattr(task, 'assigned_to_employee_id', None)
+    if not assignee_id:
+        return
+    # Only notify when newly assigned / reassigned (not every unrelated edit)
+    if previous_assignee_id is not None and previous_assignee_id == assignee_id:
+        return
+    if not telegram_enabled():
+        logging.warning('Task assign Telegram skipped: bot token not configured')
+        return
+    chat_id = _telegram_chat_id_for_employee(db, assignee_id)
+    if not chat_id:
+        logging.warning(
+            'Task assign Telegram skipped: no chat_id for employee %s (task %s)',
+            assignee_id,
+            getattr(task, 'task_id', None),
+        )
+        return
+    message = _format_task_assigned_telegram_message(task, assigned_by_name)
 
-    Sends synchronously so the message is not lost if the request worker finishes
-    before a background thread completes. Returns True if Telegram accepted the message.
-    """
-    try:
-        assignee_id = getattr(task, 'assigned_to_employee_id', None)
-        if not assignee_id:
-            logging.warning('Task assign Telegram skipped: missing assignee on task %s', getattr(task, 'task_id', None))
-            return False
-        # Only notify when newly assigned / reassigned (not every unrelated edit)
-        if previous_assignee_id is not None and previous_assignee_id == assignee_id:
-            return False
-        if not telegram_enabled():
-            logging.warning('Task assign Telegram skipped: bot token not configured')
-            return False
-        chat_id = _telegram_chat_id_for_employee(db, assignee_id)
-        if not chat_id:
-            logging.warning(
-                'Task assign Telegram skipped: no chat_id for employee %s (task %s)',
-                assignee_id,
-                getattr(task, 'task_id', None),
-            )
-            return False
-        message = _format_task_assigned_telegram_message(task, assigned_by_name)
+    def _send():
         ok, err = send_telegram_message_verbose(message, chat_id)
         if ok:
             logging.info(
@@ -3612,17 +3608,15 @@ def _notify_task_assigned_telegram(
                 assignee_id,
                 chat_id,
             )
-            return True
-        logging.warning(
-            'Task assign Telegram failed task=%s employee=%s: %s',
-            getattr(task, 'task_id', None),
-            assignee_id,
-            err,
-        )
-        return False
-    except Exception as exc:
-        logging.error('Task assign Telegram error: %s', exc)
-        return False
+        else:
+            logging.warning(
+                'Task assign Telegram failed task=%s employee=%s: %s',
+                getattr(task, 'task_id', None),
+                assignee_id,
+                err,
+            )
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 # Primary operations approver for Telegram (default: Subhashree Sahoo)
@@ -6301,13 +6295,7 @@ def create_task(task_data: TaskCreate, current_user: UserModel = Depends(get_cur
     db.commit()
     db.refresh(new_task)
 
-    notified = _notify_task_assigned_telegram(db, new_task, current_user.name)
-    if not notified:
-        logging.warning(
-            'create_task: Telegram not sent for %s assignee=%s',
-            new_task.task_id,
-            new_task.assigned_to_employee_id,
-        )
+    _notify_task_assigned_telegram(db, new_task, current_user.name)
 
     return new_task
 
@@ -13289,14 +13277,8 @@ def _start_cgw_renewal_digest_scheduler():
 
 @app.on_event('startup')
 def _cgw_digest_scheduler_startup():
-    try:
-        _start_cgw_renewal_digest_scheduler()
-    except Exception as exc:
-        logging.error('CGW digest scheduler failed to start: %s', exc)
-    try:
-        _start_telegram_poller()
-    except Exception as exc:
-        logging.error('Telegram poller failed to start: %s', exc)
+    _start_cgw_renewal_digest_scheduler()
+    _start_telegram_poller()
 
 
 @app.on_event('shutdown')

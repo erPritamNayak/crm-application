@@ -232,6 +232,6 @@ def get_telegram_updates(offset: Optional[int] = None, timeout: int = 25) -> lis
 
 
 def telegram_mode() -> str:
-    """webhook | polling | off — polling pulls updates when inbound webhook is unreachable."""
+    """webhook | polling — polling is more reliable when Telegram cannot reach the API host."""
     mode = (os.environ.get('TELEGRAM_MODE') or 'polling').strip().lower()
-    return mode if mode in ('webhook', 'polling', 'off') else 'polling'
+    return mode if mode in ('webhook', 'polling') else 'polling'

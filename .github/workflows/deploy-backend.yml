@@ -3,10 +3,8 @@ name: Deploy Backend to EC2
 on:
   push:
     branches: [main]
-    paths:
+    paths: 
       - 'backend/**'
-      - '.github/workflows/deploy-backend.yml'
-  workflow_dispatch:
 
 jobs:
   deploy:
@@ -19,14 +17,15 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          command_timeout: 25m
           script: |
-            set -e
             cd /home/ec2-user/crm-application
-            git fetch origin main
-            git reset --hard origin/main
+            git stash
+            git pull origin main
+            git stash pop || true
             cd backend
 
+            # Ensure Telegram bot config is present in .env (never committed to git — sourced from
+            # encrypted GitHub Actions secrets and written directly on the server on every deploy).
             set_env_var() {
               key="$1"
               value="$2"
@@ -45,60 +44,16 @@ jobs:
             set_env_var TELEGRAM_WEBHOOK_SECRET "${{ secrets.TELEGRAM_WEBHOOK_SECRET }}"
             set_env_var TELEGRAM_CHAT_ID "${{ secrets.TELEGRAM_CHAT_ID }}"
             set_env_var TELEGRAM_ADMIN_CHAT_ID "${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}"
-            # Recover API first: outbound Telegram notify still works without polling
-            set_env_var TELEGRAM_MODE "off"
+            set_env_var TELEGRAM_MODE "polling"
             set_env_var TELEGRAM_APPROVER_EMPLOYEE_ID "${{ secrets.TELEGRAM_APPROVER_EMPLOYEE_ID }}"
+            # Default ops approver if secret not set
             if ! grep -q '^TELEGRAM_APPROVER_EMPLOYEE_ID=' .env 2>/dev/null; then
               echo 'TELEGRAM_APPROVER_EMPLOYEE_ID=EMP0005' >> .env
             fi
+            # Ensure EMP0005 is set when secret was empty (set_env_var skips empty)
             if grep -q '^TELEGRAM_APPROVER_EMPLOYEE_ID=$' .env 2>/dev/null; then
               sed -i 's|^TELEGRAM_APPROVER_EMPLOYEE_ID=$|TELEGRAM_APPROVER_EMPLOYEE_ID=EMP0005|' .env
             fi
 
             pip3 install -r requirements.txt --quiet
-
-            echo "=== unit file ==="
-            systemctl cat uvicorn --no-pager || true
-            echo "=== stop old process ==="
-            sudo systemctl stop uvicorn || true
-            sleep 2
-            sudo fuser -k 8000/tcp 2>/dev/null || true
-            sleep 1
-
-            echo "=== import smoke test ==="
-            python3 -c "import server; print('import_ok')" || {
-              echo "IMPORT FAILED"
-              python3 -c "import traceback; traceback.print_exc()" || true
-              exit 1
-            }
-
-            sudo systemctl start uvicorn
-            sudo systemctl restart nginx || sudo systemctl restart httpd || true
-
-            healthy=0
-            for i in $(seq 1 24); do
-              if curl -sf -o /dev/null http://127.0.0.1:8000/docs; then
-                echo "uvicorn healthy after ${i} attempts"
-                healthy=1
-                break
-              fi
-              echo "waiting for uvicorn... $i"
-              sleep 5
-              if ! systemctl is-active --quiet uvicorn; then
-                echo "uvicorn service not active — restarting"
-                sudo systemctl start uvicorn || true
-              fi
-            done
-
-            if [ "$healthy" != "1" ]; then
-              echo "uvicorn failed to become healthy"
-              sudo systemctl status uvicorn --no-pager || true
-              sudo journalctl -u uvicorn -n 200 --no-pager || true
-              ss -lntp | grep -E '8000|nginx|httpd' || true
-              exit 1
-            fi
-
-            curl -sf -o /dev/null -w "localhost_docs %{http_code}\n" http://127.0.0.1:8000/docs
-            ss -lntp | grep -E ':8000|:80|:443' || true
-            grep -n "_notify_task_assigned_telegram" server.py | head -3 || true
-            python3 -c "import requests; r=requests.get('https://api.telegram.org', timeout=10); print('telegram.org status', r.status_code)" || echo "WARN: cannot reach api.telegram.org from EC2"
+            sudo systemctl restart uvicorn
