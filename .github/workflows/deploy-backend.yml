@@ -55,8 +55,8 @@ jobs:
 
             pip3 install -r requirements.txt --quiet
             sudo systemctl restart uvicorn
-            sleep 3
-            sudo systemctl is-active uvicorn
+            sleep 5
+            sudo systemctl is-active uvicorn || (sudo journalctl -u uvicorn -n 80 --no-pager; exit 1)
+            curl -sf -o /dev/null -w "localhost_docs %{http_code}\n" http://127.0.0.1:8000/docs || (sudo journalctl -u uvicorn -n 80 --no-pager; exit 1)
             grep -n "_notify_task_assigned_telegram" server.py | head -3 || true
-            # Quick outbound check (non-fatal)
             python3 -c "import requests; r=requests.get('https://api.telegram.org', timeout=10); print('telegram.org status', r.status_code)" || echo "WARN: cannot reach api.telegram.org from EC2"

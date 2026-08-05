@@ -13289,8 +13289,14 @@ def _start_cgw_renewal_digest_scheduler():
 
 @app.on_event('startup')
 def _cgw_digest_scheduler_startup():
-    _start_cgw_renewal_digest_scheduler()
-    _start_telegram_poller()
+    try:
+        _start_cgw_renewal_digest_scheduler()
+    except Exception as exc:
+        logging.error('CGW digest scheduler failed to start: %s', exc)
+    try:
+        _start_telegram_poller()
+    except Exception as exc:
+        logging.error('Telegram poller failed to start: %s', exc)
 
 
 @app.on_event('shutdown')
