@@ -3,8 +3,9 @@ name: Deploy Backend to EC2
 on:
   push:
     branches: [main]
-    paths: 
+    paths:
       - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
 
 jobs:
   deploy:
@@ -17,15 +18,13 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-            script: |
+          script: |
+            set -e
             cd /home/ec2-user/crm-application
-            # Hard sync to origin/main so local stash/conflict cannot leave stale server.py
             git fetch origin main
             git reset --hard origin/main
             cd backend
 
-            # Ensure Telegram bot config is present in .env (never committed to git — sourced from
-            # encrypted GitHub Actions secrets and written directly on the server on every deploy).
             set_env_var() {
               key="$1"
               value="$2"
@@ -46,18 +45,40 @@ jobs:
             set_env_var TELEGRAM_ADMIN_CHAT_ID "${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}"
             set_env_var TELEGRAM_MODE "polling"
             set_env_var TELEGRAM_APPROVER_EMPLOYEE_ID "${{ secrets.TELEGRAM_APPROVER_EMPLOYEE_ID }}"
-            # Default ops approver if secret not set
             if ! grep -q '^TELEGRAM_APPROVER_EMPLOYEE_ID=' .env 2>/dev/null; then
               echo 'TELEGRAM_APPROVER_EMPLOYEE_ID=EMP0005' >> .env
             fi
-            # Ensure EMP0005 is set when secret was empty (set_env_var skips empty)
             if grep -q '^TELEGRAM_APPROVER_EMPLOYEE_ID=$' .env 2>/dev/null; then
               sed -i 's|^TELEGRAM_APPROVER_EMPLOYEE_ID=$|TELEGRAM_APPROVER_EMPLOYEE_ID=EMP0005|' .env
             fi
 
+            # Prove Telegram token is present (do not print the secret)
+            if grep -q '^TELEGRAM_BOT_TOKEN=.\+' .env; then
+              echo "TELEGRAM_BOT_TOKEN is set"
+            else
+              echo "ERROR: TELEGRAM_BOT_TOKEN missing in .env"
+              exit 1
+            fi
+
             pip3 install -r requirements.txt --quiet
             sudo systemctl restart uvicorn
-            sleep 2
+            sleep 3
             sudo systemctl is-active uvicorn
-            # Confirm task-notify helper exists in the running tree
             grep -n "_notify_task_assigned_telegram" server.py | head -3
+            python3 - <<'PY'
+            from dotenv import load_dotenv
+            load_dotenv(".env")
+            from telegram_notify import telegram_enabled, send_telegram_message_verbose
+            from sqlalchemy import create_engine, text
+            import os
+            assert telegram_enabled(), "telegram_enabled() is False"
+            engine = create_engine(os.environ["DATABASE_URL"])
+            with engine.connect() as c:
+                chat = c.execute(text("SELECT telegram_chat_id FROM employees WHERE employee_id='EMP0018'")).scalar()
+            print("EMP0018 chat", chat)
+            if chat:
+                ok, err = send_telegram_message_verbose("Resoline deploy check: task Telegram notify is live on server.", chat)
+                print("deploy telegram test:", ok, err)
+                assert ok, err
+            print("telegram outbound OK")
+            PY
