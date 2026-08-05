@@ -18,6 +18,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
           script: |
             cd /home/ec2-user/crm-application
             git fetch origin main
@@ -42,6 +43,7 @@ jobs:
             set_env_var TELEGRAM_WEBHOOK_SECRET "${{ secrets.TELEGRAM_WEBHOOK_SECRET }}"
             set_env_var TELEGRAM_CHAT_ID "${{ secrets.TELEGRAM_CHAT_ID }}"
             set_env_var TELEGRAM_ADMIN_CHAT_ID "${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}"
+            # Keep polling off during recovery if it was causing instability; outbound notify still works
             set_env_var TELEGRAM_MODE "polling"
             set_env_var TELEGRAM_APPROVER_EMPLOYEE_ID "${{ secrets.TELEGRAM_APPROVER_EMPLOYEE_ID }}"
             if ! grep -q '^TELEGRAM_APPROVER_EMPLOYEE_ID=' .env 2>/dev/null; then
@@ -51,12 +53,31 @@ jobs:
               sed -i 's|^TELEGRAM_APPROVER_EMPLOYEE_ID=$|TELEGRAM_APPROVER_EMPLOYEE_ID=EMP0005|' .env
             fi
 
-            if grep -q '^TELEGRAM_BOT_TOKEN=.\+' .env; then echo "TELEGRAM_BOT_TOKEN is set"; else echo "WARN: TELEGRAM_BOT_TOKEN missing"; fi
-
             pip3 install -r requirements.txt --quiet
-            sudo systemctl restart uvicorn
-            sleep 5
-            sudo systemctl is-active uvicorn || (sudo journalctl -u uvicorn -n 80 --no-pager; exit 1)
-            curl -sf -o /dev/null -w "localhost_docs %{http_code}\n" http://127.0.0.1:8000/docs || (sudo journalctl -u uvicorn -n 80 --no-pager; exit 1)
+
+            sudo systemctl stop uvicorn || true
+            sleep 2
+            sudo systemctl start uvicorn
+            # App import/migrations can take a while
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if curl -sf -o /dev/null http://127.0.0.1:8000/docs; then
+                echo "uvicorn healthy after ${i} attempts"
+                break
+              fi
+              echo "waiting for uvicorn... $i"
+              sleep 5
+              if [ "$i" = "12" ]; then
+                echo "uvicorn failed to become healthy"
+                sudo systemctl status uvicorn --no-pager || true
+                sudo journalctl -u uvicorn -n 120 --no-pager || true
+                ss -lntp | grep -E '8000|nginx' || true
+                exit 1
+              fi
+            done
+
+            sudo systemctl restart nginx || sudo systemctl restart httpd || true
+            sleep 2
+            curl -sf -o /dev/null -w "localhost_docs %{http_code}\n" http://127.0.0.1:8000/docs
+            ss -lntp | grep -E ':8000|:80|:443' || true
             grep -n "_notify_task_assigned_telegram" server.py | head -3 || true
             python3 -c "import requests; r=requests.get('https://api.telegram.org', timeout=10); print('telegram.org status', r.status_code)" || echo "WARN: cannot reach api.telegram.org from EC2"
