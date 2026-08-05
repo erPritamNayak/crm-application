@@ -6301,7 +6301,13 @@ def create_task(task_data: TaskCreate, current_user: UserModel = Depends(get_cur
     db.commit()
     db.refresh(new_task)
 
-    _notify_task_assigned_telegram(db, new_task, current_user.name)
+    notified = _notify_task_assigned_telegram(db, new_task, current_user.name)
+    if not notified:
+        logging.warning(
+            'create_task: Telegram not sent for %s assignee=%s',
+            new_task.task_id,
+            new_task.assigned_to_employee_id,
+        )
 
     return new_task
 
