@@ -1474,6 +1474,10 @@ const CGWFlowMetre = () => {
         }
         const fresh = await axios.get(`${API}/cgw-flow-metres/${saved.id}`, { headers: authHeaders() });
         setEditingItem(fresh.data);
+        // Pending local picks are now on the server — show as saved files with preview/delete.
+        setEquipmentFlowFiles(equipmentRows.map(() => EMPTY_EQUIPMENT_FLOW_FILES()));
+        setPiezometerFiles(Array.from({ length: piezometerRows.length }, () => EMPTY_PIEZO_FILES()));
+        setAddNocFile(null);
       }
       toast.success('Draft saved. Open it from the grid to continue later.');
       fetchItems();
@@ -2212,6 +2216,22 @@ const CGWFlowMetre = () => {
   const handlePreviewSavedAttachment = (att, apiCategory) => {
     if (!editingItem || !att) return;
     openMediaDialog(editingItem, apiCategory || cgwFirstAttachmentCategory(editingItem), att.id);
+  };
+
+  const handleRemoveSavedAttachment = async (att, apiCategory) => {
+    if (!editingItem?.id || !att?.id || !apiCategory || !canManage) return;
+    if (!window.confirm(`Delete "${att.file_name || 'this file'}"? You can upload a replacement after.`)) return;
+    try {
+      const res = await axios.delete(
+        `${API}/cgw-flow-metres/${editingItem.id}/media-attachments/${apiCategory}/${encodeURIComponent(att.id)}`,
+        { headers: authHeaders() },
+      );
+      setEditingItem(res.data);
+      toast.success('File deleted. Use Add to upload again.');
+      fetchItems();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to delete file'));
+    }
   };
 
   const closeMediaDialog = () => {
@@ -2960,6 +2980,9 @@ const CGWFlowMetre = () => {
                           const rowSaved = (apiCategory) => ({
                             existingAttachments: editMode && idx === 0 ? getSavedAttachments(apiCategory) : [],
                             onPreviewExisting: (att) => handlePreviewSavedAttachment(att, apiCategory),
+                            onRemoveExisting: canManage
+                              ? (att) => handleRemoveSavedAttachment(att, apiCategory)
+                              : null,
                           });
                           return (
                             <Card key={idx} className="p-4 border border-gray-200 bg-white shadow-none rounded-lg">
@@ -3376,6 +3399,7 @@ const CGWFlowMetre = () => {
                       countLabel={`${piezometerWizardCount} piezometer${piezometerWizardCount !== 1 ? 's' : ''} (NOC count ${String(addNocForm.piezometer_count || '').trim() || '—'})`}
                       editingItem={editingItem}
                       onPreviewSaved={handlePreviewSavedAttachment}
+                      onRemoveSaved={canManage ? handleRemoveSavedAttachment : null}
                     />
                   </div>
                 ) : null}
@@ -3407,6 +3431,9 @@ const CGWFlowMetre = () => {
                         const attachSaved = (cat) => ({
                           existingAttachments: editMode && idx === 0 ? getSavedAttachments(cat) : [],
                           onPreviewExisting: (att) => handlePreviewSavedAttachment(att, cat),
+                          onRemoveExisting: canManage
+                            ? (att) => handleRemoveSavedAttachment(att, cat)
+                            : null,
                         });
                         return (
                           <div key={`add-attach-${idx}`} className="rounded-md border border-gray-200 bg-white p-3 space-y-3">
