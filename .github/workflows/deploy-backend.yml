@@ -19,9 +19,10 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ec2-user/crm-application
-            git stash
-            git pull origin main
-            git stash pop || true
+            # Hard reset avoids leftover git-stash conflict markers in server.py
+            # (those crash uvicorn → nginx 502, which browsers report as CORS).
+            git fetch origin main
+            git reset --hard origin/main
             cd backend
 
             # Ensure Telegram bot config is present in .env (never committed to git — sourced from
@@ -57,3 +58,22 @@ jobs:
 
             pip3 install -r requirements.txt --quiet
             sudo systemctl restart uvicorn
+            sleep 3
+            sudo systemctl restart nginx || sudo service nginx restart || true
+            healthy=0
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+                echo "uvicorn healthy"
+                healthy=1
+                break
+              fi
+              echo "waiting for uvicorn ($i)"
+              sleep 3
+            done
+            if [ "$healthy" -ne 1 ]; then
+              echo "uvicorn failed health check — restarting again"
+              sudo systemctl restart uvicorn
+              sleep 5
+              sudo systemctl restart nginx || true
+              curl -fsS http://127.0.0.1:8000/health || (sudo systemctl status uvicorn --no-pager; exit 1)
+            fi
