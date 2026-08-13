@@ -74,8 +74,8 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # CORS
-# Frontend is served from S3 / custom domains and calls https://api.resoline.in.
-# A missing Origin (or a dead uvicorn 502) shows up in the browser as a CORS error.
+# Frontend is on S3 / custom domains and calls https://api.resoline.in.
+# When uvicorn is down, nginx returns 502 WITHOUT CORS headers — browsers report that as a CORS error.
 _cors_from_env = [
     origin.strip()
     for origin in os.environ.get('CORS_ORIGINS', '').split(',')
@@ -100,15 +100,14 @@ ALLOWED_ORIGINS = list(dict.fromkeys(_cors_from_env + [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    # Echo any Origin so S3 / CloudFront / Amplify / new subdomains keep working.
-    # Regex (not "*") is valid together with credentials.
+    # Any http(s) Origin (S3 / CloudFront / Amplify / new subdomains).
     allow_origin_regex=r"^https?://.*",
-    allow_credentials=True,
+    # Auth is Bearer token in Authorization header — credentials not required.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
-
 
 @app.get('/health')
 def health():
@@ -943,8 +942,11 @@ class StockItemModel(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
-# Create all tables
-Base.metadata.create_all(bind=engine)
+# Create all tables (must not crash process — a hard fail here 502s nginx and browsers show CORS)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    logging.error('Base.metadata.create_all failed (API will still start): %s', e)
 
 SETTING_CGW_DIGEST_EMAIL = 'cgw_renewal_digest_email'
 SETTING_CGW_DIGEST_ENABLED = 'cgw_renewal_digest_enabled'
