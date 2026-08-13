@@ -9,7 +9,9 @@ import {
   PREVIEW_FLOW_ATTACHMENT_KEYS,
   PREVIEW_LIFECYCLE_ATTACHMENT_KEYS,
   PREVIEW_PIEZO_ATTACHMENT_KEYS,
+  attachmentKeyGroupsForMap,
   buildCustomerPreviewModel,
+  normalizeCgwAttachments,
   previewCommunicationVia,
   previewDisplay,
   previewNocType,
@@ -222,7 +224,7 @@ function AttachmentsPanel({ attachmentKeyGroups, attachments, onOpenPreview }) {
 function FlowMetrePreviewCard({ line, lineLabel, onOpenAttachmentPreview }) {
   const row = line.equipment;
   const inv = line.inventoryRow;
-  const attachments = inv?.cgw_attachments || {};
+  const attachments = normalizeCgwAttachments(inv?.cgw_attachments);
 
   return (
     <Card className="border border-gray-200 bg-white shadow-sm rounded-xl overflow-hidden">
@@ -317,8 +319,9 @@ function FlowMetrePreviewCard({ line, lineLabel, onOpenAttachmentPreview }) {
 
 function PiezometerPreviewCard({ line, index, onOpenAttachmentPreview }) {
   const pz = line.data;
-  const inv = line.inventoryRow;
-  const attachments = inv?.cgw_attachments || {};
+  // Prefer inventoryRow; fall back to legacy `row` key from older builders.
+  const inv = line.inventoryRow || line.row;
+  const attachments = normalizeCgwAttachments(inv?.cgw_attachments);
 
   return (
     <Card className="border border-gray-200 bg-white shadow-sm rounded-xl overflow-hidden">
@@ -391,9 +394,22 @@ export function CgwCustomerPreviewDialog({
           group.rows.map(async (row) => {
             try {
               const res = await axios.get(`${API}/cgw-flow-metres/${row.id}`, { headers });
-              return res.data;
+              const data = res.data || row;
+              return {
+                ...row,
+                ...data,
+                // Prefer fresh attachments; fall back to list payload if API omits them.
+                cgw_attachments: normalizeCgwAttachments(
+                  data.cgw_attachments && Object.keys(normalizeCgwAttachments(data.cgw_attachments)).length
+                    ? data.cgw_attachments
+                    : row.cgw_attachments,
+                ),
+              };
             } catch {
-              return row;
+              return {
+                ...row,
+                cgw_attachments: normalizeCgwAttachments(row.cgw_attachments),
+              };
             }
           }),
         );
@@ -409,19 +425,27 @@ export function CgwCustomerPreviewDialog({
   }, [open, group]);
 
   const model = useMemo(() => {
-    const rows = enrichedRows.length ? enrichedRows : group?.rows || [];
+    const rows = enrichedRows.length ? enrichedRows : (group?.rows || []).map((row) => ({
+      ...row,
+      cgw_attachments: normalizeCgwAttachments(row.cgw_attachments),
+    }));
     return buildCustomerPreviewModel(rows, customerCode);
   }, [enrichedRows, group, customerCode]);
 
   const hasAdditionalAttachments = useMemo(() => {
     if (!model?.equipmentLines?.length) return false;
     return model.equipmentLines.some((line) => {
-      const attachments = line.inventoryRow?.cgw_attachments || {};
+      const attachments = normalizeCgwAttachments(line.inventoryRow?.cgw_attachments);
       return (
         PREVIEW_LIFECYCLE_ATTACHMENT_KEYS.some(({ key }) => (attachments[key] || []).length > 0) ||
         Boolean(line.equipment?.additional_document_type)
       );
     });
+  }, [model]);
+
+  const allDocsCount = useMemo(() => {
+    const map = model?.allAttachments || {};
+    return Object.values(map).reduce((acc, list) => acc + (Array.isArray(list) ? list.length : 0), 0);
   }, [model]);
 
   if (!model) return null;
@@ -462,6 +486,23 @@ export function CgwCustomerPreviewDialog({
               </div>
             ) : (
               <div className="space-y-5 max-w-[1320px] mx-auto">
+                {/* Uploaded documents overview — always reflects every attachment on the customer */}
+                <SectionPanel
+                  step="Docs"
+                  title="Uploaded documents"
+                  accent="bg-blue-50 border-blue-100"
+                >
+                  {allDocsCount === 0 ? (
+                    <p className="text-sm text-gray-500 italic">No documents uploaded for this customer yet.</p>
+                  ) : (
+                    <AttachmentsPanel
+                      attachmentKeyGroups={attachmentKeyGroupsForMap(model.allAttachments)}
+                      attachments={model.allAttachments || {}}
+                      onOpenPreview={openAttachmentPreview}
+                    />
+                  )}
+                </SectionPanel>
+
                 {/* 1 — Customer */}
                 <SectionPanel step="1" title="Customer & portal access" accent="bg-sky-50 border-sky-100">
                   <div className="space-y-4">
@@ -612,7 +653,7 @@ export function CgwCustomerPreviewDialog({
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       {model.equipmentLines.map((line, idx) => {
-                        const attachments = line.inventoryRow?.cgw_attachments || {};
+                        const attachments = normalizeCgwAttachments(line.inventoryRow?.cgw_attachments);
                         const hasAny = PREVIEW_LIFECYCLE_ATTACHMENT_KEYS.some(
                           ({ key }) => (attachments[key] || []).length > 0,
                         );

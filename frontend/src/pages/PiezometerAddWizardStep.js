@@ -70,6 +70,7 @@ function PiezometerAddWizardStep({
   submitting,
   editingItem = null,
   onPreviewSaved = null,
+  onRemoveSaved = null,
 }) {
   return (
     <div className="space-y-4">
@@ -92,6 +93,7 @@ function PiezometerAddWizardStep({
             return {
               existingAttachments: editingItem?.cgw_attachments?.[cat] || [],
               onPreviewExisting: (att) => onPreviewSaved?.(att, cat),
+              onRemoveExisting: onRemoveSaved ? (att) => onRemoveSaved(att, cat) : null,
             };
           };
           return (

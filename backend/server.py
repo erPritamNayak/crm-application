@@ -3008,8 +3008,9 @@ class FuelExpenseClaimAction(BaseModel):
 class CgwFileAttachment(BaseModel):
     model_config = ConfigDict(extra='ignore')
     id: str
-    file_name: str
+    file_name: str = 'File'
     url: str
+    mime_type: Optional[str] = None
 
 
 CGW_MEDIA_ATTACHMENT_KEYS = (
@@ -5225,7 +5226,21 @@ def _cgw_media_buckets_from_stored_json(item: CGWFlowMetreModel) -> Dict[str, Li
             for k in CGW_MEDIA_ATTACHMENT_KEYS:
                 v = data.get(k)
                 if isinstance(v, list):
-                    buckets[k] = [x for x in v if isinstance(x, dict) and x.get('id') and x.get('url')]
+                    cleaned = []
+                    for x in v:
+                        if not isinstance(x, dict):
+                            continue
+                        url = (x.get('url') or x.get('file_url') or '').strip()
+                        att_id = (x.get('id') or '').strip() or url
+                        if not url:
+                            continue
+                        cleaned.append({
+                            'id': att_id,
+                            'file_name': (x.get('file_name') or x.get('name') or x.get('filename') or 'File'),
+                            'url': url,
+                            **({'mime_type': x['mime_type']} if x.get('mime_type') else {}),
+                        })
+                    buckets[k] = cleaned
     except Exception:
         pass
     return buckets
