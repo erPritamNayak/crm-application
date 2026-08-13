@@ -4134,13 +4134,45 @@ def _sync_employee_telegram_to_user(db: Session, employee: EmployeeModel) -> Non
 
 
 def _telegram_chat_id_for_employee(db: Session, employee_id: str) -> Optional[str]:
-    employee = db.query(EmployeeModel).filter(EmployeeModel.employee_id == employee_id).first()
-    if employee and employee.telegram_chat_id:
-        return employee.telegram_chat_id
-    user = db.query(UserModel).filter(UserModel.employee_id == employee_id).first()
-    if user and user.telegram_chat_id:
-        return user.telegram_chat_id
+    """Resolve Telegram chat id from employee record, then linked user account."""
+    if not employee_id:
+        return None
+    try:
+        employee = db.query(EmployeeModel).filter(EmployeeModel.employee_id == employee_id).first()
+        if employee:
+            chat = (getattr(employee, 'telegram_chat_id', None) or '').strip()
+            if chat:
+                return chat
+    except Exception as exc:
+        logging.warning('Telegram chat lookup on employees failed for %s: %s', employee_id, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    try:
+        user = db.query(UserModel).filter(UserModel.employee_id == employee_id).first()
+        if user:
+            chat = (getattr(user, 'telegram_chat_id', None) or '').strip()
+            if chat:
+                return chat
+    except Exception as exc:
+        logging.warning('Telegram chat lookup on users failed for %s: %s', employee_id, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
     return None
+
+
+def _telegram_chat_id_for_user(db: Session, user: UserModel) -> Optional[str]:
+    """Chat id for the logged-in user (employee link preferred, then user profile)."""
+    if not user:
+        return None
+    if getattr(user, 'employee_id', None):
+        from_emp = _telegram_chat_id_for_employee(db, user.employee_id)
+        if from_emp:
+            return from_emp
+    return (getattr(user, 'telegram_chat_id', None) or '').strip() or None
 
 
 # In-memory state for the Telegram-bot punch in/out conversation flow.
@@ -4259,11 +4291,16 @@ def telegram_link_status(
     current_user: UserModel = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    chat_id = (
-        _telegram_chat_id_for_employee(db, current_user.employee_id)
-        if current_user.employee_id
-        else getattr(current_user, 'telegram_chat_id', None)
-    )
+    """Available to every authenticated user so anyone can connect Telegram."""
+    try:
+        chat_id = _telegram_chat_id_for_user(db, current_user)
+    except Exception as exc:
+        logging.exception('telegram_link_status failed for user %s: %s', current_user.id, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        chat_id = (getattr(current_user, 'telegram_chat_id', None) or '').strip() or None
     return TelegramStatusResponse(
         enabled=telegram_enabled(),
         linked=bool(chat_id),
@@ -4289,16 +4326,15 @@ def telegram_set_chat_id(
     current_user.telegram_link_code = None
     current_user.telegram_link_expires = None
     if current_user.employee_id:
-        employee = db.query(EmployeeModel).filter(EmployeeModel.employee_id == current_user.employee_id).first()
-        if employee:
-            employee.telegram_chat_id = data.chat_id
+        try:
+            employee = db.query(EmployeeModel).filter(EmployeeModel.employee_id == current_user.employee_id).first()
+            if employee:
+                employee.telegram_chat_id = data.chat_id
+        except Exception as exc:
+            logging.warning('Could not sync telegram_chat_id to employee %s: %s', current_user.employee_id, exc)
     db.commit()
 
-    chat_id = (
-        _telegram_chat_id_for_employee(db, current_user.employee_id)
-        if current_user.employee_id
-        else current_user.telegram_chat_id
-    )
+    chat_id = _telegram_chat_id_for_user(db, current_user)
     return TelegramStatusResponse(
         enabled=telegram_enabled(),
         linked=bool(chat_id),
@@ -4323,15 +4359,11 @@ def telegram_test_notification(
             status_code=503,
             detail='Telegram is not configured on the server (TELEGRAM_BOT_TOKEN missing).',
         )
-    chat_id = (
-        _telegram_chat_id_for_employee(db, current_user.employee_id)
-        if current_user.employee_id
-        else getattr(current_user, 'telegram_chat_id', None)
-    )
+    chat_id = _telegram_chat_id_for_user(db, current_user)
     if not chat_id:
         raise HTTPException(
             status_code=400,
-            detail='No Telegram Chat ID on your profile. Add it under Employees → Edit, or use Connect to Telegram.',
+            detail='No Telegram Chat ID on your profile. Add it under Settings → Connect to Telegram.',
         )
     message = (
         'Resoline CRM — test notification\n\n'

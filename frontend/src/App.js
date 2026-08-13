@@ -223,7 +223,7 @@ function App() {
                 <Route
                   path="/settings"
                   element={
-                    <ProtectedRoute requiredPermission="settings">
+                    <ProtectedRoute>
                       <Settings />
                     </ProtectedRoute>
                   }
