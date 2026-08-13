@@ -243,6 +243,7 @@ function FlowMetrePreviewCard({ line, lineLabel, onOpenAttachmentPreview }) {
             <PreviewField label="Make" value={previewDisplay(row.flow_meter_make)} />
             <PreviewField label="Size" value={previewDisplay(row.flow_meter_size)} />
             <PreviewField label="Serial number" value={previewDisplay(row.flow_meter_serial)} mono />
+            <PreviewField label="Commissioning date" value={previewDisplay(row.flow_meter_commissioning_date)} mono />
           </FieldGrid>
         </SubSection>
 
@@ -269,6 +270,9 @@ function FlowMetrePreviewCard({ line, lineLabel, onOpenAttachmentPreview }) {
               ) : null}
               <PreviewField label="Product code" value={previewDisplay(row.telemetry_product_code)} mono />
               <PreviewField label="Serial number" value={previewDisplay(row.telemetry_serial_number)} mono />
+              <PreviewField label="Commissioning date of telemetry" value={previewDisplay(row.telemetry_commissioning_date)} mono />
+              <PreviewField label="How many telemetry SIM changed?" value={previewDisplay(row.telemetry_sim_changed_count)} />
+              <PreviewField label="How many times recharge done?" value={previewDisplay(row.telemetry_recharge_count)} />
               <PreviewField label="Portal URL" value={previewDisplay(row.telemetry_portal_url)} className="sm:col-span-2 lg:col-span-3" />
               <CopyablePreviewField label="Username" value={row.telemetry_username} />
               <PasswordPreviewField label="Password" password={row.telemetry_password} />
@@ -338,6 +342,7 @@ function PiezometerPreviewCard({ line, index, onOpenAttachmentPreview }) {
             <PreviewField label="Make" value={previewDisplay(pz.piezometer_make)} />
             <PreviewField label="Serial" value={previewDisplay(pz.piezometer_serial)} mono />
             <PreviewField label="Sensor cable length" value={previewDisplay(pz.sensor_cable_length)} />
+            <PreviewField label="Commissioning date" value={previewDisplay(pz.commissioning_date)} mono />
             <PreviewField label="Calibration valid from" value={previewDisplay(pz.calibration_valid_from)} mono />
             <PreviewField label="Calibration valid to" value={previewDisplay(pz.calibration_valid_to)} mono />
             <PreviewField label="Telemetry applicable?" value={previewYesNo(pz.telemetry_applicable)} />
@@ -347,6 +352,9 @@ function PiezometerPreviewCard({ line, index, onOpenAttachmentPreview }) {
                 <PreviewField label="Communication via" value={previewCommunicationVia(pz.telemetry_communication_via)} />
                 <PreviewField label="Product code" value={previewDisplay(pz.telemetry_product_code)} mono />
                 <PreviewField label="Serial number" value={previewDisplay(pz.telemetry_serial_number)} mono />
+                <PreviewField label="Commissioning date of telemetry" value={previewDisplay(pz.telemetry_commissioning_date)} mono />
+                <PreviewField label="How many telemetry SIM changed?" value={previewDisplay(pz.telemetry_sim_changed_count)} />
+                <PreviewField label="How many times recharge done?" value={previewDisplay(pz.telemetry_recharge_count)} />
               </>
             ) : null}
           </FieldGrid>

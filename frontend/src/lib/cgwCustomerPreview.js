@@ -5,6 +5,7 @@ export const PREVIEW_FLOW_ATTACHMENT_KEYS = [
   { key: 'calibration_certificate', label: 'Calibration certificate' },
   { key: 'service_report', label: 'Service report' },
   { key: 'telemetry', label: 'Telemetry device photos' },
+  { key: 'telemetry_service_report', label: 'Telemetry service report' },
   { key: 'telemetry_excel_prior', label: 'Telemetry Excel (prior year)' },
   { key: 'telemetry_service_prior', label: 'Telemetry service (prior year)' },
 ];
@@ -21,10 +22,12 @@ export const PREVIEW_LIFECYCLE_ATTACHMENT_KEYS = [
 
 export const PREVIEW_PIEZO_ATTACHMENT_KEYS = [
   { key: 'piezometer_bw', label: 'Piezometer BW photos' },
+  { key: 'piezometer_service', label: 'Piezometer service report' },
   { key: 'piezometer_calibration', label: 'Piezometer calibration' },
   { key: 'piezometer_telemetry', label: 'Piezometer telemetry photos' },
+  { key: 'piezometer_telemetry_service', label: 'Piezometer telemetry service report' },
   { key: 'piezometer_excel_prior', label: 'Piezometer Excel (prior year)' },
-  { key: 'piezometer_service_report', label: 'Piezometer service report' },
+  { key: 'piezometer_service_report', label: 'Piezometer prior-year service report' },
 ];
 
 const EMPTY_EQUIPMENT_ROW = {
@@ -35,6 +38,7 @@ const EMPTY_EQUIPMENT_ROW = {
   flow_meter_make: 'UPC',
   flow_meter_size: '',
   flow_meter_serial: '',
+  flow_meter_commissioning_date: '',
   calibration_valid_from: '',
   calibration_valid_to: '',
   telemetry_applicable: '',
@@ -48,6 +52,9 @@ const EMPTY_EQUIPMENT_ROW = {
   telemetry_sim_valid_to: '',
   telemetry_product_code: '',
   telemetry_serial_number: '',
+  telemetry_commissioning_date: '',
+  telemetry_sim_changed_count: '',
+  telemetry_recharge_count: '',
   telemetry_portal_url: '',
   telemetry_username: '',
   telemetry_password: '',
@@ -119,6 +126,7 @@ export function equipmentRowFromItem(item) {
     flow_meter_make: item?.flow_meter_make || 'UPC',
     flow_meter_size: item?.flow_meter_size || '',
     flow_meter_serial: item?.flow_meter_serial || '',
+    flow_meter_commissioning_date: item?.flow_meter_commissioning_date || '',
     calibration_valid_from: item?.calibration_valid_from || '',
     calibration_valid_to: item?.calibration_valid_to || '',
     telemetry_applicable: item?.telemetry_applicable || '',
@@ -132,6 +140,9 @@ export function equipmentRowFromItem(item) {
     telemetry_sim_valid_to: item?.telemetry_sim_valid_to || '',
     telemetry_product_code: item?.telemetry_product_code || '',
     telemetry_serial_number: item?.telemetry_serial_number || '',
+    telemetry_commissioning_date: item?.telemetry_commissioning_date || '',
+    telemetry_sim_changed_count: item?.telemetry_sim_changed_count || '',
+    telemetry_recharge_count: item?.telemetry_recharge_count || '',
     telemetry_portal_url: item?.telemetry_portal_url || '',
     telemetry_username: item?.telemetry_username || '',
     telemetry_password: item?.telemetry_password || '',
