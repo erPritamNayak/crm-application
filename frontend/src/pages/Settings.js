@@ -19,7 +19,14 @@ export const Settings = () => {
   const [loading, setLoading] = useState(false);
   const [officeLocation, setOfficeLocation] = useState({ configured: false, latitude: null, longitude: null });
   const [officeLoading, setOfficeLoading] = useState(false);
-  const [telegramStatus, setTelegramStatus] = useState({ enabled: false, linked: false });
+  // Prefer showing connect UI; only hide it when the server explicitly says Telegram is disabled.
+  const [telegramStatus, setTelegramStatus] = useState({
+    enabled: true,
+    linked: false,
+    bot_username: 'Resoline_bot',
+  });
+  const [telegramStatusKnown, setTelegramStatusKnown] = useState(false);
+  const [telegramStatusError, setTelegramStatusError] = useState('');
   const [telegramLoading, setTelegramLoading] = useState(false);
   const [telegramConnectUrl, setTelegramConnectUrl] = useState(null);
   const [manualChatId, setManualChatId] = useState('');
@@ -30,11 +37,23 @@ export const Settings = () => {
       .get(`${API}/telegram/status`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
       .then((res) => {
         setTelegramStatus(res.data);
+        setTelegramStatusKnown(true);
+        setTelegramStatusError('');
         if (res.data.linked) {
           setTelegramConnectUrl(null);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        // Do not treat a failed status call as "Telegram not configured on server".
+        // Keep the connect UI available and surface a recoverable error instead.
+        const detail = err?.response?.data?.detail;
+        setTelegramStatusError(
+          typeof detail === 'string'
+            ? detail
+            : 'Could not refresh Telegram status. You can still try Connect below.',
+        );
+        setTelegramStatusKnown(true);
+      });
   };
 
   useEffect(() => {
@@ -243,7 +262,23 @@ export const Settings = () => {
         </div>
       </Card>
 
-      {telegramStatus.enabled ? (
+      {/* Show Connect for everyone unless the server explicitly reports Telegram disabled. */}
+      {telegramStatusKnown && telegramStatus.enabled === false ? (
+        <Card className="p-6 rounded-lg border border-amber-200 bg-amber-50 shadow-sm">
+          <h3 className="text-lg font-semibold text-gray-900">Telegram notifications</h3>
+          <p className="text-sm text-amber-900 mt-2">
+            Telegram is not configured on the server yet. Ask your admin to set <code className="text-xs bg-white px-1 rounded">TELEGRAM_BOT_TOKEN</code> in the backend environment and restart the API.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4 border-gray-300"
+            onClick={refreshTelegramStatus}
+          >
+            Retry status check
+          </Button>
+        </Card>
+      ) : (
         <Card className="p-6 rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="flex items-start gap-3 mb-4">
             <Send className="h-6 w-6 text-blue-600 mt-0.5 shrink-0" />
@@ -254,6 +289,12 @@ export const Settings = () => {
               </p>
             </div>
           </div>
+
+          {telegramStatusError ? (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4">
+              {telegramStatusError}
+            </p>
+          ) : null}
 
           {telegramStatus.linked ? (
             <div className="space-y-3">
@@ -354,13 +395,6 @@ export const Settings = () => {
               </Button>
             </div>
           )}
-        </Card>
-      ) : (
-        <Card className="p-6 rounded-lg border border-amber-200 bg-amber-50 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900">Telegram notifications</h3>
-          <p className="text-sm text-amber-900 mt-2">
-            Telegram is not configured on the server yet. Ask your admin to set <code className="text-xs bg-white px-1 rounded">TELEGRAM_BOT_TOKEN</code> in the backend environment and restart the API.
-          </p>
         </Card>
       )}
 
