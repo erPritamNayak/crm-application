@@ -10867,13 +10867,6 @@ def _material_product_complete(payload: dict) -> bool:
     return all(_material_row_filled(r) for r in rows if _material_row_started(r))
 
 
-def _positive_number(value) -> bool:
-    try:
-        return float(value or 0) > 0
-    except (TypeError, ValueError):
-        return False
-
-
 def _named_material_rows(rows) -> List[dict]:
     if not isinstance(rows, list):
         return []
@@ -10883,15 +10876,29 @@ def _named_material_rows(rows) -> List[dict]:
     ]
 
 
+def _parse_money(value) -> float:
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = str(value or '').replace('₹', '').replace(',', '').strip()
+        return float(cleaned) if cleaned else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _positive_number(value) -> bool:
+    return _parse_money(value) > 0
+
+
 def _bom_costing_complete(payload: dict) -> bool:
-    """Stock unit costs entered; vendor lines already quoted. Legacy BOM materials still allowed."""
+    """Priced stock + vendor lines that are fully filled. Legacy BOM materials still allowed."""
     mp = payload.get('material_product') or {}
-    stock = _named_material_rows(mp.get('stock_items'))
-    purchase = _named_material_rows(mp.get('purchase_items'))
+    stock = [row for row in _named_material_rows(mp.get('stock_items')) if _material_row_filled(row)]
+    purchase = [row for row in _named_material_rows(mp.get('purchase_items')) if _material_row_filled(row)]
     if stock or purchase:
         if any(not _positive_number(row.get('unit_cost')) for row in stock):
             return False
-        if any(not _positive_number(row.get('quoted_price')) for row in purchase):
+        if any(not _positive_number(row.get('quoted_price') or row.get('unit_cost')) for row in purchase):
             return False
         return True
     materials = (payload.get('bom') or {}).get('materials') or []
