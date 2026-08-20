@@ -374,6 +374,33 @@ function buildWizardSnapshot({
   };
 }
 
+function appendCgwNocFormData(fd, form, piezometerCount = '') {
+  fd.append('project_name', form.project_name || '');
+  fd.append('project_address', form.project_address || '');
+  fd.append('communication_address', form.communication_address || '');
+  fd.append('noc_no', form.noc_no || '');
+  fd.append('application_no', form.application_no || '');
+  fd.append('project_status', form.project_status || '');
+  fd.append('noc_type', form.noc_type || '');
+  fd.append('valid_from', form.valid_from || '');
+  fd.append('valid_upto', form.valid_upto || '');
+  fd.append('permitted_m3_per_day', form.permitted_m3_per_day || '');
+  fd.append('permitted_m3_per_year', form.permitted_m3_per_year || '');
+  fd.append('existing_bw_count', form.existing_bw_count || '');
+  fd.append('total_proposed_bw_count', form.total_proposed_bw_count || '');
+  fd.append('flowmeter_applicable', form.flowmeter_applicable || '');
+  fd.append('flowmeter_count', form.flowmeter_count || '');
+  fd.append('piezometer_applicable', form.piezometer_applicable || '');
+  fd.append(
+    'piezometer_count',
+    form.piezometer_applicable === 'yes' ? String(piezometerCount || form.piezometer_count || '') : '',
+  );
+  fd.append('bhuneer_user_id', form.bhuneer_user_id || '');
+  fd.append('bhuneer_password', form.bhuneer_password || '');
+  fd.append('nocap_user_id', form.nocap_user_id || '');
+  fd.append('nocap_password', form.nocap_password || '');
+}
+
 function equipmentRowFromItem(item) {
   const prevSerial = (item?.telemetry_previous_serial || '').trim();
   return {
@@ -896,6 +923,12 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
   /** Local blob URL for NOC PDF preview in Add wizard step 2 (same pattern as NOC popup). */
   const [addNocPdfObjectUrl, setAddNocPdfObjectUrl] = useState('');
   const [addNocPdfPreviewVisible, setAddNocPdfPreviewVisible] = useState(true);
+  const [addNocUploading, setAddNocUploading] = useState(false);
+  const [wizardSavedNocPreviewUrl, setWizardSavedNocPreviewUrl] = useState('');
+  const [wizardSavedNocPreviewLoading, setWizardSavedNocPreviewLoading] = useState(false);
+  const addNocPdfUrlRef = useRef('');
+  const wizardSavedNocBlobRef = useRef(null);
+  const skipCreateHydrateRef = useRef(null);
   /** True while add-wizard bulk create + uploads are in flight (piezometer Submit or Add Item). */
   const [addWizardSubmitting, setAddWizardSubmitting] = useState(false);
   const [inlineEditId, setInlineEditId] = useState(null);
@@ -1113,11 +1146,29 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
     }
   }, [isListScreen]);
 
+  const revokeAddNocLocalPdfUrl = useCallback(() => {
+    if (addNocPdfUrlRef.current) {
+      URL.revokeObjectURL(addNocPdfUrlRef.current);
+      addNocPdfUrlRef.current = '';
+    }
+    setAddNocPdfObjectUrl('');
+  }, []);
+
+  const revokeWizardSavedNocPreview = useCallback(() => {
+    if (wizardSavedNocBlobRef.current) {
+      URL.revokeObjectURL(wizardSavedNocBlobRef.current);
+      wizardSavedNocBlobRef.current = null;
+    }
+    setWizardSavedNocPreviewUrl('');
+    setWizardSavedNocPreviewLoading(false);
+  }, []);
+
   useEffect(() => {
     return () => {
-      if (addNocPdfObjectUrl) URL.revokeObjectURL(addNocPdfObjectUrl);
+      if (addNocPdfUrlRef.current) URL.revokeObjectURL(addNocPdfUrlRef.current);
+      if (wizardSavedNocBlobRef.current) URL.revokeObjectURL(wizardSavedNocBlobRef.current);
     };
-  }, [addNocPdfObjectUrl]);
+  }, []);
 
   const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
@@ -1243,6 +1294,49 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
       setNocRemotePreviewLoading(false);
     };
   }, [nocDialogOpen, nocTargetItem?.id, nocTargetItem?.noc_document_url, nocLocalPreview, revokeNocRemoteBlob]);
+
+  useEffect(() => {
+    const savedUrl = editingItem?.noc_document_url;
+    if (!isCreateScreen || addNocPdfObjectUrl || !savedUrl) {
+      revokeWizardSavedNocPreview();
+      return undefined;
+    }
+    const full = nocDocHref(savedUrl);
+    if (!isNocStreamableRemoteUrl(full)) {
+      revokeWizardSavedNocPreview();
+      setWizardSavedNocPreviewUrl(full);
+      return undefined;
+    }
+
+    let cancelled = false;
+    revokeWizardSavedNocPreview();
+    setWizardSavedNocPreviewLoading(true);
+
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/files/stream`, {
+          params: { file_url: full },
+          headers: authHeaders(),
+          responseType: 'blob',
+        });
+        if (cancelled) return;
+        const blob = new Blob([res.data], { type: 'application/pdf' });
+        const u = URL.createObjectURL(blob);
+        wizardSavedNocBlobRef.current = u;
+        setWizardSavedNocPreviewUrl(u);
+      } catch (err) {
+        if (!cancelled) {
+          toast.error(getApiErrorMessage(err, 'Could not load NOC preview'));
+        }
+      } finally {
+        if (!cancelled) setWizardSavedNocPreviewLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreateScreen, editingItem?.noc_document_url, addNocPdfObjectUrl, revokeWizardSavedNocPreview]);
 
   useEffect(() => {
     if (!SHOW_CGW_DIGEST_EMAIL_SECTION) return undefined;
@@ -1572,13 +1666,8 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
     setPiezometerFiles(Array.from({ length: pz.length }, () => EMPTY_PIEZO_FILES()));
     setAddStep(Math.min(Math.max(Number(snap?.addStep) || 1, 1), addWizardFinalStep));
     setAddNocFile(null);
-    setAddNocPdfObjectUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return '';
-    });
-    if (item?.noc_document_url) {
-      setAddNocPdfPreviewVisible(false);
-    }
+    revokeAddNocLocalPdfUrl();
+    setAddNocPdfPreviewVisible(true);
   };
 
   const handleSaveDraft = async () => {
@@ -1627,6 +1716,25 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
         }
         for (let pi = 0; pi < (piezometerFiles || []).length; pi += 1) {
           uploadFailures.push(...(await uploadPiezometerFlowBundle(saved.id, piezometerFiles[pi] || {})));
+        }
+        if (addNocFile) {
+          try {
+            const fd = new FormData();
+            fd.append('file', addNocFile);
+            appendCgwNocFormData(fd, addNocForm, piezometerWizardCount);
+            await axios.post(`${API}/cgw-flow-metres/${saved.id}/noc`, fd, {
+              headers: authHeaders(),
+              timeout: 120000,
+              maxBodyLength: Infinity,
+              maxContentLength: Infinity,
+            });
+          } catch (nocErr) {
+            uploadFailures.push({
+              category: 'noc',
+              fileName: addNocFile.name || 'NOC PDF',
+              reason: getApiErrorMessage(nocErr, 'upload failed'),
+            });
+          }
         }
         const fresh = await axios.get(`${API}/cgw-flow-metres/${saved.id}`, { headers: authHeaders() });
         setEditingItem(fresh.data);
@@ -2012,11 +2120,27 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
         (addNocForm.piezometer_applicable === 'yes' && needsPiezometerWizardStep)
       );
 
-      if (createdRows.length && (addNocFile || hasNocMeta)) {
+      if (createdRows.length && (addNocFile || editingItem?.noc_document_url || hasNocMeta)) {
+        let nocFileToAttach = addNocFile;
+        if (!nocFileToAttach && editingItem?.noc_document_url) {
+          try {
+            const full = nocDocHref(editingItem.noc_document_url);
+            const res = isNocStreamableRemoteUrl(full)
+              ? await axios.get(`${API}/files/stream`, {
+                  params: { file_url: full },
+                  headers: authHeaders(),
+                  responseType: 'blob',
+                })
+              : await axios.get(full, { headers: authHeaders(), responseType: 'blob' });
+            nocFileToAttach = new File([res.data], 'noc.pdf', { type: 'application/pdf' });
+          } catch (_copyErr) {
+            nocFileToAttach = null;
+          }
+        }
         for (const row of createdRows) {
-          if (addNocFile) {
+          if (nocFileToAttach) {
             const fd = new FormData();
-            fd.append('file', addNocFile);
+            fd.append('file', nocFileToAttach);
             fd.append('project_name', addNocForm.project_name || '');
             fd.append('project_address', addNocForm.project_address || '');
             fd.append('communication_address', addNocForm.communication_address || '');
@@ -2055,7 +2179,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
             } catch (nocErr) {
               uploadFailures.push({
                 category: 'noc',
-                fileName: addNocFile.name || 'NOC PDF',
+                fileName: nocFileToAttach.name || 'NOC PDF',
                 reason: getApiErrorMessage(nocErr, 'upload failed'),
               });
               try {
@@ -2210,6 +2334,11 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
       setEditHydrating(false);
       return undefined;
     }
+    if (skipCreateHydrateRef.current === routeEditId) {
+      skipCreateHydrateRef.current = null;
+      setEditHydrating(false);
+      return undefined;
+    }
     let cancelled = false;
     (async () => {
       setEditHydrating(true);
@@ -2281,10 +2410,9 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
     setEquipmentFlowFiles([EMPTY_EQUIPMENT_FLOW_FILES()]);
     setAddNocForm(EMPTY_NOC_FORM);
     setAddNocFile(null);
-    setAddNocPdfObjectUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return '';
-    });
+    revokeAddNocLocalPdfUrl();
+    revokeWizardSavedNocPreview();
+    setAddNocUploading(false);
     setAddNocPdfPreviewVisible(true);
     setPiezometerRows([]);
     setPiezometerFiles([]);
@@ -2295,13 +2423,44 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
     setEditingItem(null);
   };
 
-  const handleAddNocWizardFilePicked = (e) => {
+  const persistCreateDraftQuietly = async () => {
+    if (editingItemId && editingItem && !isDraftRecord(editingItem)) {
+      return editingItem;
+    }
+    const wizard = buildWizardSnapshot({
+      addStep,
+      formData,
+      equipmentRows,
+      addNocForm,
+      piezometerRows,
+    });
+    const body = {
+      wizard,
+      customer_id: formData.customer_id,
+      customer_name: formData.customer_name || '',
+    };
+    if (editingItemId) {
+      const res = await axios.put(`${API}/cgw-flow-metres/${editingItemId}/draft`, body, {
+        headers: authHeaders(),
+      });
+      setEditingItem(res.data);
+      setEditMode(true);
+      return res.data;
+    }
+    const res = await axios.post(`${API}/cgw-flow-metres/draft`, body, { headers: authHeaders() });
+    const saved = res.data;
+    setEditingItemId(saved.id);
+    setEditMode(true);
+    setEditingItem(saved);
+    skipCreateHydrateRef.current = saved.id;
+    navigate(`${CREATE_CGWA_PATH}/${saved.id}`, { replace: true });
+    return saved;
+  };
+
+  const handleAddNocWizardFilePicked = async (e) => {
     const f = e.target.files?.[0];
     e.target.value = '';
-    setAddNocPdfObjectUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return '';
-    });
+    revokeAddNocLocalPdfUrl();
     if (!f) {
       setAddNocFile(null);
       return;
@@ -2310,10 +2469,35 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
       toast.error('Only PDF files are allowed');
       return;
     }
+    if (!(formData.customer_id || '').trim()) {
+      toast.error('Select a customer on the previous step before uploading the NOC PDF.');
+      return;
+    }
     const u = URL.createObjectURL(f);
+    addNocPdfUrlRef.current = u;
     setAddNocPdfObjectUrl(u);
     setAddNocFile(f);
     setAddNocPdfPreviewVisible(true);
+    setAddNocUploading(true);
+    try {
+      const saved = await persistCreateDraftQuietly();
+      if (!saved?.id) throw new Error('Draft was not saved');
+      const fd = new FormData();
+      fd.append('file', f);
+      appendCgwNocFormData(fd, addNocForm, piezometerWizardCount);
+      const nocRes = await axios.post(`${API}/cgw-flow-metres/${saved.id}/noc`, fd, {
+        headers: authHeaders(),
+        timeout: 120000,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
+      setEditingItem(nocRes.data);
+      toast.success('NOC saved to draft');
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Could not save NOC to draft'));
+    } finally {
+      setAddNocUploading(false);
+    }
   };
 
   const validatePiezometerWizardStep = () => {
@@ -2932,7 +3116,14 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-5">
                       <div className="min-w-0 space-y-2 lg:sticky lg:top-0 lg:self-start">
-                        {!addNocFile ? (
+                        {(() => {
+                          const savedNocUrl = editingItem?.noc_document_url;
+                          const previewSrc = addNocPdfObjectUrl || wizardSavedNocPreviewUrl;
+                          const hasSavedNoc = !!savedNocUrl;
+                          const showPicker = !addNocFile && !hasSavedNoc;
+                          return (
+                            <>
+                        {showPicker ? (
                           <>
                             <Label className="text-sm font-medium text-gray-700">NOC PDF (optional)</Label>
                             <Input
@@ -2942,12 +3133,14 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                               className="h-11"
                             />
                             <p className="text-[11px] text-gray-500">
-                              If selected, the same NOC PDF is attached to every equipment row you create. Preview below while you fill the form.
+                              If selected, the same NOC PDF is attached to every equipment row you create. It is saved to your draft so you can preview it after leaving this step.
                             </p>
-                            <p className="text-[11px] text-gray-400 pt-1">Choose a PDF to open an inline preview (same as the NOC popup).</p>
                           </>
                         ) : null}
-                        {addNocFile && addNocPdfObjectUrl ? (
+                        {addNocUploading ? (
+                          <p className="text-[11px] text-blue-700">Saving NOC to draft…</p>
+                        ) : null}
+                        {previewSrc ? (
                           <div className="space-y-2 pt-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <Button
@@ -2960,6 +3153,15 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                                 <Eye className="h-3.5 w-3.5 mr-1" />
                                 {addNocPdfPreviewVisible ? 'Hide PDF preview' : 'Show PDF preview'}
                               </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs"
+                                onClick={() => window.open(previewSrc, '_blank', 'noopener,noreferrer')}
+                              >
+                                Preview PDF
+                              </Button>
                               <label className="text-[11px] font-medium text-blue-600 hover:text-blue-800 cursor-pointer shrink-0 underline-offset-2 hover:underline">
                                 Replace PDF
                                 <input
@@ -2969,40 +3171,28 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                                   className="sr-only"
                                 />
                               </label>
-                              <span className="text-[11px] text-gray-500 truncate max-w-[200px]" title={addNocFile.name}>
-                                {addNocFile.name}
+                              <span className="text-[11px] text-gray-500 truncate max-w-[200px]" title={addNocFile?.name || 'NOC PDF'}>
+                                {addNocFile?.name || 'Saved NOC PDF'}
                               </span>
                             </div>
                             {addNocPdfPreviewVisible ? (
                               <div className="rounded-md border border-gray-200 overflow-hidden bg-neutral-900">
                                 <iframe
                                   title="NOC PDF preview"
-                                  src={addNocPdfObjectUrl}
+                                  src={previewSrc}
                                   className="h-[min(72vh,720px)] min-h-[320px] w-full border-0 bg-white"
                                 />
                               </div>
                             ) : null}
                           </div>
-                        ) : addNocFile ? (
-                          <p className="text-[11px] text-amber-700 pt-1">Preparing preview…</p>
-                        ) : editMode && editingItem?.noc_document_url ? (
-                          <div className="rounded-md border border-gray-200 bg-white p-3 space-y-2">
-                            <p className="text-xs text-gray-600">Saved NOC document on this record</p>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8 text-xs"
-                              onClick={() => {
-                                const href = mediaPreviewHref(editingItem.noc_document_url);
-                                if (href) window.open(href, '_blank', 'noopener,noreferrer');
-                              }}
-                            >
-                              <Eye className="h-3.5 w-3.5 mr-1" />
-                              View saved NOC
-                            </Button>
-                          </div>
+                        ) : addNocFile || wizardSavedNocPreviewLoading ? (
+                          <p className="text-[11px] text-amber-700 pt-1">
+                            {wizardSavedNocPreviewLoading ? 'Loading saved NOC preview…' : 'Preparing preview…'}
+                          </p>
                         ) : null}
+                            </>
+                          );
+                        })()}
                       </div>
                       <div className="min-w-0 w-full shrink-0 space-y-4 lg:w-[280px]">
                     <div className="rounded-lg border border-gray-200 bg-slate-50/50 p-3 space-y-3">
