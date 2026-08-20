@@ -3495,7 +3495,7 @@ def require_permission(permission: str):
 
 
 def can_manage_cgw(current_user: UserModel, db: Session) -> bool:
-    """Allow Admin and any role with cgw-flow-metre permission."""
+    """Allow Admin and any role with cgw-flow-metre permission (view/create/drafts)."""
     if is_admin_user(current_user):
         return True
     perms = get_permissions_for_role(db, current_user.role)
@@ -3503,8 +3503,33 @@ def can_manage_cgw(current_user: UserModel, db: Session) -> bool:
 
 
 def can_delete_cgw(current_user: UserModel) -> bool:
-    """Delete entire CGW inventory rows — Admin only."""
+    """Delete entire submitted CGW inventory rows — Admin only."""
     return is_admin_user(current_user)
+
+
+def _is_cgw_draft_record(item) -> bool:
+    return (
+        str(getattr(item, 'status', None) or '').strip().lower() == 'draft'
+        or _is_cgw_draft_inventory_id(getattr(item, 'inventory_id', None))
+    )
+
+
+def can_mutate_cgw_item(current_user: UserModel, item, db: Session) -> bool:
+    """Admin may change any row; other CGW users may only change drafts."""
+    if is_admin_user(current_user):
+        return True
+    if not can_manage_cgw(current_user, db):
+        return False
+    return _is_cgw_draft_record(item)
+
+
+def _require_cgw_item_mutation(current_user: UserModel, item, db: Session) -> None:
+    if can_mutate_cgw_item(current_user, item, db):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail='Only an administrator can edit or delete a submitted CGWA record',
+    )
 
 
 # ============= HEALTH CHECK ROUTES =============
@@ -5698,6 +5723,7 @@ def update_cgw_flow_metre(inventory_id: str, data: CGWFlowMetreUpdate, current_u
     item = db.query(CGWFlowMetreModel).filter(CGWFlowMetreModel.id == inventory_id).first()
     if not item:
         raise HTTPException(status_code=404, detail='Inventory item not found')
+    _require_cgw_item_mutation(current_user, item, db)
 
     needs_cgwa_id = _is_cgw_draft_inventory_id(item.inventory_id)
     for key, value in data.model_dump(exclude_unset=True).items():
@@ -5828,6 +5854,11 @@ def save_cgw_flow_metre_draft(
     item = db.query(CGWFlowMetreModel).filter(CGWFlowMetreModel.id == inventory_id).first()
     if not item:
         raise HTTPException(status_code=404, detail='Inventory item not found')
+    if not _is_cgw_draft_record(item) and not is_admin_user(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail='Only an administrator can edit a submitted CGWA record',
+        )
     _cgw_apply_draft_wizard_to_row(item, data)
     item.status = 'Draft'
     item.last_modified_by_name = current_user.name
@@ -6303,8 +6334,8 @@ def import_cgw_from_excel(
     db: Session = Depends(get_db)
 ):
     """Import CGW Flow Metre items from Excel file"""
-    if not can_manage_cgw(current_user, db):
-        raise HTTPException(status_code=403, detail='Not authorized')
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail='Only an administrator can import CGWA records')
     
     try:
         # Read Excel file. This workbook uses a two-row header where

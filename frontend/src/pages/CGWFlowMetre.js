@@ -12,7 +12,7 @@ import { Plus, Minus, Edit, Trash2, Search, Mail, Phone, Filter, X, FileText, Ey
 import { useNavigate, useParams } from 'react-router-dom';
 import { API_ENDPOINT, BACKEND_BASE_URL } from '@/lib/apiConfig';
 import { getApiErrorMessage } from '@/lib/apiErrors';
-import { userCanDeleteCgw, userCanManageCgw, isAdminUser } from '@/lib/permissions';
+import { userCanDeleteCgw, userCanManageCgw, userCanEditCgwRecord, userCanEditSubmittedCgw, isAdminUser } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 import PiezometerAddWizardStep, {
   EMPTY_PIEZO_ROW,
@@ -145,13 +145,22 @@ function notifyCgwSaveWithUploads(successMsg, failures) {
 /** Wizard-aligned grid sections: colspan when expanded vs collapsed (single summary column). */
 const CGW_GRID_SECTION_COLSPANS = {
   /** Includes leading CGWA unique ID (inventory_id), then customer fields. */
-  customer: { open: 7, collapsed: 1 },
+  customer: { open: 7, collapsed: 2 },
   noc: { open: 8, collapsed: 1 },
   flowMetre: { open: 23, collapsed: 1 },
   piezometer: { open: 6, collapsed: 1 },
   /** Wizard step 5 only (no lifecycle fields — those are not on the create form). */
   lifecycleAdditional: { open: 7, collapsed: 1 },
 };
+
+/** Frozen View CGWA columns (CGWA ID + customer name) while the grid scrolls sideways. */
+const cgwStickyId = 'sticky left-0 min-w-[148px] w-[148px] max-w-[148px]';
+const cgwStickyName = 'sticky left-[148px] min-w-[200px] w-[200px] max-w-[200px]';
+const cgwStickyIdHead = `${cgwStickyId} z-40 bg-sky-100 border-r border-sky-200`;
+const cgwStickyNameHead = `${cgwStickyName} z-40 bg-sky-100 shadow-[6px_0_10px_-6px_rgba(15,23,42,0.18)]`;
+const cgwStickyPairHead = 'sticky left-0 z-40 bg-sky-100 border-r border-sky-200';
+const cgwStickyIdCell = `${cgwStickyId} z-20 bg-sky-50 border-r border-sky-100`;
+const cgwStickyNameCell = `${cgwStickyName} z-20 bg-sky-50 shadow-[6px_0_10px_-6px_rgba(15,23,42,0.18)]`;
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 /** When true, shows the “Daily past-due renewal email” admin card (CGW inventory). */
 const SHOW_CGW_DIGEST_EMAIL_SECTION = false;
@@ -903,7 +912,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
   const [telemValidToFilter, setTelemValidToFilter] = useState('');
   /** Inventory table: wizard-aligned column groups; collapsed groups show one summary column each. */
   const [cgwGridSectionsOpen, setCgwGridSectionsOpen] = useState({
-    customer: true,
+    customer: false,
     noc: true,
     flowMetre: true,
     piezometer: true,
@@ -1018,7 +1027,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
       piezometer_applicable: item.noc_piezometer_applicable || '',
       piezometer_count: item.noc_piezometer_count || '',
     });
-    const canEditNoc = hasCgwAccess;
+    const canEditNoc = userCanEditSubmittedCgw(user);
     setNocSideFieldsEditable(canEditNoc && !startInPreviewMode);
     setNocDialogOpen(true);
   };
@@ -2187,6 +2196,10 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
 
   const handleEdit = (item) => {
     if (!item?.id) return;
+    if (!userCanEditCgwRecord(user, item)) {
+      toast.error('Only an administrator can edit a submitted CGWA record');
+      return;
+    }
     navigate(`${CREATE_CGWA_PATH}/${item.id}`);
   };
 
@@ -2204,6 +2217,11 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
         const res = await axios.get(`${API}/cgw-flow-metres/${routeEditId}`, { headers: authHeaders() });
         if (cancelled) return;
         const full = res.data;
+        if (!userCanEditCgwRecord(user, full)) {
+          toast.error('Only an administrator can edit a submitted CGWA record');
+          navigate(VIEW_CGWA_PATH);
+          return;
+        }
         setEditMode(true);
         setEditingItemId(full.id);
         setEditingItem(full);
@@ -2235,6 +2253,10 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
   };
 
   const handleInlineSave = async (id) => {
+    if (!userCanEditSubmittedCgw(user)) {
+      toast.error('Only an administrator can edit a submitted CGWA record');
+      return;
+    }
     try {
       await axios.put(`${API}/cgw-flow-metres/${id}`, inlineEditData, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -2410,7 +2432,8 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
     }
   };
 
-  const canManage = hasCgwAccess;
+  const canCreateCgw = hasCgwAccess;
+  const canManage = userCanEditSubmittedCgw(user);
   const canDeleteCgw = userCanDeleteCgw(user);
   const nocReadOnly = !canManage;
 
@@ -2684,7 +2707,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
   }, [isCreateScreen, isDraftsScreen, editMode, editingItem, items.length, filteredItems.length]);
 
   const pageHeaderActions = useMemo(() => {
-    if (!isViewScreen || !canManage) return null;
+    if (!isViewScreen || !hasCgwAccess) return null;
     return (
       <>
         <select
@@ -2785,7 +2808,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
     );
   }, [
     isViewScreen,
-    canManage,
+    hasCgwAccess,
     nocValidUptoFilter,
     telemValidToFilter,
     showColumnFilter,
@@ -2811,7 +2834,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
 
   return (
     <div className="space-y-6" data-testid={isCreateScreen ? 'create-cgwa-page' : isDraftsScreen ? 'my-cgwa-drafts-page' : 'view-cgwa-page'}>
-      {isCreateScreen && canManage && (
+      {isCreateScreen && canCreateCgw && (
         <Card className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
               <form
                 onSubmit={(e) => e.preventDefault()}
@@ -3200,7 +3223,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                           const rowSaved = (apiCategory) => ({
                             existingAttachments: editMode && idx === 0 ? getSavedAttachments(apiCategory) : [],
                             onPreviewExisting: (att) => handlePreviewSavedAttachment(att, apiCategory),
-                            onRemoveExisting: canManage
+                            onRemoveExisting: canCreateCgw
                               ? (att) => handleRemoveSavedAttachment(att, apiCategory)
                               : null,
                           });
@@ -3666,7 +3689,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                       countLabel={`${piezometerWizardCount} piezometer${piezometerWizardCount !== 1 ? 's' : ''} (NOC count ${String(addNocForm.piezometer_count || '').trim() || '—'})`}
                       editingItem={editingItem}
                       onPreviewSaved={handlePreviewSavedAttachment}
-                      onRemoveSaved={canManage ? handleRemoveSavedAttachment : null}
+                      onRemoveSaved={canCreateCgw ? handleRemoveSavedAttachment : null}
                     />
                   </div>
                 ) : null}
@@ -3698,7 +3721,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                         const attachSaved = (cat) => ({
                           existingAttachments: editMode && idx === 0 ? getSavedAttachments(cat) : [],
                           onPreviewExisting: (att) => handlePreviewSavedAttachment(att, cat),
-                          onRemoveExisting: canManage
+                          onRemoveExisting: canCreateCgw
                             ? (att) => handleRemoveSavedAttachment(att, cat)
                             : null,
                         });
@@ -3905,21 +3928,21 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
             className="table-scroll overflow-x-auto overflow-y-scroll h-[calc(100vh-240px)] min-h-[400px] max-h-[calc(100vh-240px)] scrollbar-thin"
             style={{ scrollbarWidth: 'auto' }}
           >
-            <table className="w-full text-sm min-w-[8400px]">
-              <thead>
+            <table className="w-full text-sm min-w-max border-separate border-spacing-0">
+              <thead className="sticky top-0 z-30">
                 <tr className="border-b border-gray-200 bg-gray-50">
+                  <th
+                    colSpan={2}
+                    className={`text-center py-2.5 px-2 font-semibold text-sky-900 ${cgwStickyPairHead}`}
+                  >
+                    <CgwGridSectionHeader title="1 · Customer" isOpen={cgwGridSectionsOpen.customer} onToggle={() => toggleCgwGridSection('customer')} />
+                  </th>
                   {cgwGridSectionsOpen.customer ? (
                     <th
-                      colSpan={CGW_GRID_SECTION_COLSPANS.customer.open}
+                      colSpan={CGW_GRID_SECTION_COLSPANS.customer.open - 2}
                       className="text-center py-2.5 px-2 font-semibold text-sky-900 bg-sky-100/80 border-r border-sky-200"
-                    >
-                      <CgwGridSectionHeader title="1 · Customer" isOpen={cgwGridSectionsOpen.customer} onToggle={() => toggleCgwGridSection('customer')} />
-                    </th>
-                  ) : (
-                    <th rowSpan={2} className="align-middle text-center py-2 px-2 font-semibold text-sky-900 bg-sky-100/80 border-r border-sky-200 min-w-[100px]">
-                      <CgwGridSectionHeader title="1 · Customer" isOpen={cgwGridSectionsOpen.customer} onToggle={() => toggleCgwGridSection('customer')} />
-                    </th>
-                  )}
+                    />
+                  ) : null}
                   {cgwGridSectionsOpen.noc ? (
                     <th colSpan={CGW_GRID_SECTION_COLSPANS.noc.open} className="text-center py-2.5 px-2 font-semibold text-cyan-900 bg-cyan-100/80 border-r border-cyan-200">
                       <CgwGridSectionHeader title="2 · NOC" isOpen={cgwGridSectionsOpen.noc} onToggle={() => toggleCgwGridSection('noc')} />
@@ -3963,17 +3986,19 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                   )}
                 </tr>
                 <tr className="border-b border-gray-200 bg-gray-50/90">
-                  {cgwGridSectionsOpen.customer ? (
                     <>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">CGWA ID</th>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">CUSTOMER NAME</th>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">LOCATION</th>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">CONTACT PERSON</th>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">SYSTEM MOBILE</th>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">PERSON MOBILE</th>
-                      <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">EMAIL ID</th>
+                      <th className={`text-left py-3 px-4 font-semibold text-sky-900 whitespace-nowrap ${cgwStickyIdHead}`}>CGWA ID</th>
+                      <th className={`text-left py-3 px-4 font-semibold text-sky-900 whitespace-nowrap ${cgwStickyNameHead}`}>CUSTOMER NAME</th>
+                      {cgwGridSectionsOpen.customer ? (
+                        <>
+                          <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">LOCATION</th>
+                          <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">CONTACT PERSON</th>
+                          <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">SYSTEM MOBILE</th>
+                          <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">PERSON MOBILE</th>
+                          <th className="text-left py-3 px-4 font-semibold text-sky-900 bg-sky-50 whitespace-nowrap">EMAIL ID</th>
+                        </>
+                      ) : null}
                     </>
-                  ) : null}
                   {cgwGridSectionsOpen.noc ? (
                     <>
                       <th className="text-left py-3 px-4 font-semibold text-cyan-900 bg-cyan-50 whitespace-nowrap min-w-[108px] align-top">
@@ -4063,10 +4088,9 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                         : 'border-b border-gray-100 hover:bg-gray-50/50';
 
                   return group.rows.map((item, rowIndex) => (
-                    <tr key={item.id} className={`${rowRenewalClass} align-top`}>
-                      {cgwGridSectionsOpen.customer ? (
-                        <>
-                          <td className="py-3 px-4 text-gray-800 whitespace-nowrap bg-sky-50/40 font-mono text-[11px] align-top">
+                    <tr key={item.id} className={`${rowRenewalClass} align-top group`}>
+                      <>
+                          <td className={`py-3 px-4 text-gray-800 whitespace-nowrap font-mono text-[11px] align-top ${cgwStickyIdCell}`}>
                             {item.inventory_id ? (
                               <button
                                 type="button"
@@ -4081,12 +4105,18 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                             )}
                           </td>
                           {rowIndex === 0 && (
-                            <td rowSpan={group.rows.length} className="py-3 px-4 font-medium text-gray-900 whitespace-nowrap bg-sky-50/40">
+                            <td rowSpan={group.rows.length} className={`py-3 px-4 font-medium text-gray-900 ${cgwStickyNameCell}`}>
                               {groupEditActive ? (
                                 <Input value={inlineEditData.customer_name} onChange={(e) => handleInlineChange('customer_name', e.target.value)} className="h-7 text-[11px] px-2" />
-                              ) : (groupAnchor.customer_name || '—')}
+                              ) : (
+                                <span className="block truncate" title={groupAnchor.customer_name || ''}>
+                                  {groupAnchor.customer_name || '—'}
+                                </span>
+                              )}
                             </td>
                           )}
+                          {cgwGridSectionsOpen.customer ? (
+                            <>
                           {rowIndex === 0 && (
                             <td rowSpan={group.rows.length} className="py-3 px-4 text-gray-600 whitespace-nowrap bg-sky-50/40">
                               {groupEditActive ? <Input value={inlineEditData.location} onChange={(e) => handleInlineChange('location', e.target.value)} className="h-7 text-[11px] px-2" /> : (groupAnchor.location || '—')}
@@ -4126,25 +4156,9 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                               ) : '—'}
                             </td>
                           )}
+                            </>
+                          ) : null}
                         </>
-                      ) : rowIndex === 0 ? (
-                        <td rowSpan={group.rows.length} className="py-3 px-3 text-gray-800 bg-sky-50/40 align-top max-w-[200px]">
-                          <button
-                            type="button"
-                            className="text-[11px] font-mono font-semibold text-left text-blue-700 hover:text-blue-900 hover:underline leading-snug focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
-                            title="View CGWA details"
-                            onClick={() => openCustomerPreview(group)}
-                          >
-                            {group.rows.map((r) => r.inventory_id).filter(Boolean).join(' · ') || '—'}
-                          </button>
-                          <p className="text-xs font-medium text-gray-900 truncate mt-1" title={groupAnchor.customer_name || ''}>
-                            {groupAnchor.customer_name || '—'}
-                          </p>
-                          <p className="text-[10px] text-gray-500 mt-1 leading-snug line-clamp-3" title={groupAnchor.location || ''}>
-                            {groupAnchor.location || '—'}
-                          </p>
-                        </td>
-                      ) : null}
 
                       {cgwGridSectionsOpen.noc ? (
                         <>
@@ -4515,7 +4529,7 @@ const CGWFlowMetre = ({ mode = 'view' }) => {
                               <Edit className="h-3 w-3 mr-1" />
                               Continue
                             </Button>
-                            {(canDeleteCgw || canManage) && (
+                            {(canDeleteCgw || (isDraftsScreen && hasCgwAccess)) && (
                               <Button
                                 variant="outline"
                                 size="sm"
