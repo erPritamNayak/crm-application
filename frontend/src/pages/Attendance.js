@@ -507,6 +507,39 @@ export const Attendance = () => {
     }
   };
 
+  const downloadCustomReport = () => {
+    if (!report.length) {
+      toast.error('No report data to download. Load a report first.');
+      return;
+    }
+    const header = ['Date', 'Employee', 'Employee ID', 'Punch In (IST)', 'Punch Out (IST)', 'Hours', 'Status'];
+    const lines = [
+      header.map(csvCell).join(','),
+      ...report.map((row) =>
+        [
+          csvCell(row.date),
+          csvCell(row.employee_name),
+          csvCell(row.employee_id),
+          csvCell(formatPunchTime(row.punch_in)),
+          csvCell(formatPunchTime(row.punch_out)),
+          csvCell(row.work_hours != null ? Number(row.work_hours).toFixed(2) : '0'),
+          csvCell(row.status)
+        ].join(',')
+      )
+    ];
+    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const employeeSuffix = selectedEmployee ? `_${selectedEmployee}` : '_all';
+    link.download = `Attendance_Report_${startDate}_to_${endDate}${employeeSuffix}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success('Attendance report downloaded');
+  };
+
   const fetchLateDetails = async () => {
     setLateLoading(true);
     try {
@@ -2647,9 +2680,19 @@ export const Attendance = () => {
                 ))}
               </select>
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <Button onClick={fetchReport} disabled={reportLoading}>
                 {reportLoading ? 'Loading…' : 'Load Report'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 border-gray-300"
+                onClick={downloadCustomReport}
+                disabled={report.length === 0 || reportLoading}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download
               </Button>
             </div>
           </div>
