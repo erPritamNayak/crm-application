@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Generate Amiya Samal resume PDF and DOCX with CRM project."""
+"""Generate a neat, professionally aligned resume (PDF + DOCX)."""
 
 from pathlib import Path
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt, RGBColor
-from reportlab.lib.colors import HexColor, black, white
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from docx.shared import Inches, Pt, RGBColor, Twips
+from reportlab.lib.colors import HexColor, black
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.platypus import (
+    Flowable,
     HRFlowable,
+    KeepTogether,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -22,363 +26,566 @@ from reportlab.platypus import (
 
 OUT_DIR = Path(__file__).resolve().parent
 
+NAVY = HexColor("#0F2942")
+ACCENT = HexColor("#1B4F72")
+MUTED = HexColor("#555555")
+LINE = HexColor("#C5CDD6")
+
 CRM_BULLETS = [
-    "Built Resoline CRM, a full-stack business operations platform using React.js, FastAPI (Python), and MySQL, covering leads, customers, employees, and role-based access control.",
-    "Implemented lead and customer management with detailed workspaces, document handling, and AWS S3 file storage for attachments and photos.",
-    "Developed attendance with GPS punch-in/out, late-punch approval workflows, leave management, and a live location tracker on maps for field staff.",
-    "Designed a Kanban task board with priorities, due dates, comments, time logs, completion tracking, and file attachments for team collaboration.",
+    "Built Resoline CRM, a full-stack business operations platform using React.js, FastAPI (Python), and MySQL for leads, customers, employees, and role-based access.",
+    "Implemented lead and customer management with detailed workspaces, document handling, and AWS S3 storage for attachments and photos.",
+    "Developed attendance with GPS punch-in/out, late-punch approval workflows, leave management, and live map-based location tracking for field staff.",
+    "Designed a Kanban task board with priorities, due dates, comments, time logs, completion tracking, and file attachments.",
     "Added inventory and stock management with warehouses, purchase receipts, transfers, weighted-average costing, and reorder alerts.",
     "Built vehicle tracking and fuel expense claims with meter-photo verification, distance/fuel calculation, and admin approval flows.",
-    "Delivered supporting modules for expenses, payroll/salary, operations workspace, service maintenance, dashboards, and monthly reports.",
-    "Used JWT authentication, permission-based roles, REST APIs, and responsive UI (Tailwind/Radix) for secure multi-user access across desktop and mobile.",
+    "Delivered expenses, payroll/salary, operations workspace, service maintenance, dashboards, and monthly reporting modules.",
+    "Secured the app with JWT authentication, permission-based roles, REST APIs, and a responsive Tailwind/Radix UI.",
 ]
 
 
-def build_docx(path: Path) -> None:
-    doc = Document()
-    section = doc.sections[0]
-    section.top_margin = Inches(0.55)
-    section.bottom_margin = Inches(0.55)
-    section.left_margin = Inches(0.7)
-    section.right_margin = Inches(0.7)
+class SectionHeader(Flowable):
+    """Bold section title with a clean full-width underline."""
 
-    style = doc.styles["Normal"]
-    style.font.name = "Calibri"
-    style.font.size = Pt(10)
+    def __init__(self, text: str, width: float):
+        super().__init__()
+        self.text = text
+        self._width = width
+        self.height = 16
 
-    name = doc.add_paragraph()
-    name.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = name.add_run("AMIYA SAMAL")
-    run.bold = True
-    run.font.size = Pt(18)
-    run.font.color.rgb = RGBColor(0x1A, 0x36, 0x5D)
+    def wrap(self, availWidth, availHeight):
+        self._width = availWidth
+        return availWidth, self.height
 
-    contact = doc.add_paragraph()
-    contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    c = contact.add_run(
-        "amiyasamal833@gmail.com  |  +91 8144928667  |  Bhubaneswar, Odisha, India\n"
-        "linkedin.com/in/amiyasamal"
-    )
-    c.font.size = Pt(9)
-    c.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-
-    def heading(text: str) -> None:
-        p = doc.add_paragraph()
-        r = p.add_run(text)
-        r.bold = True
-        r.font.size = Pt(11)
-        r.font.color.rgb = RGBColor(0x1A, 0x36, 0x5D)
-        p.paragraph_format.space_before = Pt(10)
-        p.paragraph_format.space_after = Pt(2)
-        border = doc.add_paragraph()
-        border.paragraph_format.space_before = Pt(0)
-        border.paragraph_format.space_after = Pt(4)
-        # visual separator via underscore line
-        br = border.add_run("─" * 78)
-        br.font.size = Pt(6)
-        br.font.color.rgb = RGBColor(0x1A, 0x36, 0x5D)
-
-    def body(text: str, bold: bool = False, size: int = 10) -> None:
-        p = doc.add_paragraph()
-        r = p.add_run(text)
-        r.bold = bold
-        r.font.size = Pt(size)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.space_before = Pt(0)
-
-    def bullet(text: str) -> None:
-        p = doc.add_paragraph(style="List Bullet")
-        p.clear()
-        r = p.add_run(text)
-        r.font.size = Pt(9.5)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.left_indent = Inches(0.25)
-
-    heading("ABOUT ME")
-    about = (
-        "Motivated and detail-oriented fresher with a strong passion for software development. "
-        "Enthusiastic about learning new technologies and applying problem-solving skills to "
-        "real-world challenges. Passionate about full-stack development, particularly the MERN "
-        "stack, and eager to work on innovative projects that enhance user experience and "
-        "efficiency. A quick learner with strong analytical skills and a collaborative mindset, "
-        "aiming to apply technical skills to real-world applications."
-    )
-    p = doc.add_paragraph(about)
-    for run in p.runs:
-        run.font.size = Pt(9.5)
-    p.paragraph_format.space_after = Pt(4)
-
-    heading("WORK EXPERIENCE")
-    body("FREELANCE WEB DEVELOPER  |  Self-Employed  |  01/2024 – Present", bold=True, size=10)
-    bullet("Implemented responsive design techniques for better user experience.")
-    bullet("Managed website hosting and maintenance for clients.")
-
-    heading("EDUCATION")
-    body(
-        "Bachelor of Technology in Computer Science, GANDHI ENGINEERING COLLEGE  |  2022 – 2026",
-        bold=True,
-        size=10,
-    )
-    body("Bhubaneswar, Odisha, India", size=9)
-    body(
-        "Intermediate in Science (ISC) - Science, SADHU GOURESWAR COLLEGE  |  2020 – 2022 (70.33%)",
-        bold=True,
-        size=10,
-    )
-    body("Jajpur, Odisha, India", size=9)
-    body(
-        "Primary Education, KANTABANIA HIGH SCHOOL  |  2020 (68.83%)",
-        bold=True,
-        size=10,
-    )
-    body("Jajpur, Odisha, India", size=9)
-
-    heading("SKILLS")
-    skills = [
-        ("Programming Languages", "C, C++, Python, Java"),
-        ("Web Development", "HTML, CSS, JavaScript, MERN Stack (MongoDB, Express.js, React.js, Node.js), FastAPI"),
-        ("Database", "MySQL, SQLite"),
-        ("Tools & Practices", "Git & GitHub, REST APIs, AWS S3"),
-        ("Soft Skills", "Problem Solving, Logical Thinking, Communication & Teamwork"),
-    ]
-    for label, value in skills:
-        p = doc.add_paragraph()
-        r1 = p.add_run(f"{label}: ")
-        r1.bold = True
-        r1.font.size = Pt(9.5)
-        r2 = p.add_run(value)
-        r2.font.size = Pt(9.5)
-        p.paragraph_format.space_after = Pt(1)
-
-    heading("PROJECTS")
-    body("PERSONAL PORTFOLIO WEBSITE", bold=True, size=10)
-    body(
-        "Designed and developed a personal portfolio website to showcase projects and skills "
-        "using HTML, CSS, and JavaScript. Technologies Used: HTML, CSS, JavaScript, Bootstrap",
-        size=9.5,
-    )
-
-    body("RESOLINE CRM — Full-Stack Business Operations Platform", bold=True, size=10)
-    for item in CRM_BULLETS:
-        bullet(item)
-
-    heading("CERTIFICATIONS")
-    body("Introduction to Python  |  Full-stack web development  |  Data Analysis", size=9.5)
-
-    doc.save(path)
+    def draw(self):
+        self.canv.setFillColor(NAVY)
+        self.canv.setFont("Helvetica-Bold", 11)
+        self.canv.drawString(0, 5, self.text.upper())
+        self.canv.setStrokeColor(ACCENT)
+        self.canv.setLineWidth(1.2)
+        self.canv.line(0, 1, self._width, 1)
 
 
-def build_pdf(path: Path) -> None:
-    doc = SimpleDocTemplate(
-        str(path),
-        pagesize=A4,
-        leftMargin=0.65 * inch,
-        rightMargin=0.65 * inch,
-        topMargin=0.5 * inch,
-        bottomMargin=0.5 * inch,
-    )
-    styles = getSampleStyleSheet()
-    navy = HexColor("#1A365D")
-    gray = HexColor("#333333")
-
-    styles.add(
-        ParagraphStyle(
-            name="Name",
+def _styles():
+    return {
+        "name": ParagraphStyle(
+            "Name",
             fontName="Helvetica-Bold",
-            fontSize=18,
-            textColor=navy,
+            fontSize=20,
+            textColor=NAVY,
             alignment=TA_CENTER,
-            spaceAfter=4,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="Contact",
+            spaceAfter=2,
+            leading=24,
+        ),
+        "contact": ParagraphStyle(
+            "Contact",
             fontName="Helvetica",
             fontSize=9,
-            textColor=gray,
+            textColor=MUTED,
             alignment=TA_CENTER,
             leading=12,
-            spaceAfter=8,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="Section",
-            fontName="Helvetica-Bold",
-            fontSize=11,
-            textColor=navy,
-            spaceBefore=8,
             spaceAfter=2,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="BodyText2",
+        ),
+        "body": ParagraphStyle(
+            "Body",
             fontName="Helvetica",
             fontSize=9.5,
             textColor=black,
-            leading=12,
             alignment=TA_JUSTIFY,
-            spaceAfter=4,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="JobTitle",
+            leading=12.5,
+            spaceAfter=2,
+        ),
+        "role": ParagraphStyle(
+            "Role",
             fontName="Helvetica-Bold",
             fontSize=10,
             textColor=black,
-            spaceBefore=2,
-            spaceAfter=2,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="BulletText",
+            leading=13,
+        ),
+        "role_right": ParagraphStyle(
+            "RoleRight",
             fontName="Helvetica",
             fontSize=9.5,
-            textColor=black,
-            leading=12,
-            leftIndent=12,
-            spaceAfter=2,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="SkillLine",
-            fontName="Helvetica",
-            fontSize=9.5,
-            textColor=black,
-            leading=12,
-            spaceAfter=1,
-        )
-    )
-    styles.add(
-        ParagraphStyle(
-            name="Meta",
-            fontName="Helvetica",
+            textColor=MUTED,
+            alignment=TA_RIGHT,
+            leading=13,
+        ),
+        "sub": ParagraphStyle(
+            "Sub",
+            fontName="Helvetica-Oblique",
             fontSize=9,
-            textColor=gray,
-            spaceAfter=2,
+            textColor=MUTED,
+            leading=12,
+        ),
+        "sub_right": ParagraphStyle(
+            "SubRight",
+            fontName="Helvetica-Oblique",
+            fontSize=9,
+            textColor=MUTED,
+            alignment=TA_RIGHT,
+            leading=12,
+        ),
+        "bullet": ParagraphStyle(
+            "Bullet",
+            fontName="Helvetica",
+            fontSize=9.5,
+            textColor=black,
+            leading=12.2,
+            leftIndent=10,
+            firstLineIndent=-10,
+            spaceBefore=1,
+            spaceAfter=1,
+        ),
+        "proj_title": ParagraphStyle(
+            "ProjTitle",
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            textColor=black,
+            leading=13,
+            spaceBefore=3,
+            spaceAfter=1,
+        ),
+        "skill": ParagraphStyle(
+            "Skill",
+            fontName="Helvetica",
+            fontSize=9.5,
+            textColor=black,
+            leading=12.5,
+            spaceAfter=1,
+        ),
+        "cert": ParagraphStyle(
+            "Cert",
+            fontName="Helvetica",
+            fontSize=9.5,
+            textColor=black,
+            leading=12,
+            alignment=TA_LEFT,
+        ),
+    }
+
+
+def _two_col(left, right, styles, left_w=4.7 * inch, right_w=2.0 * inch):
+    """Left-aligned title and right-aligned date/meta on one row."""
+    data = [[
+        Paragraph(left, styles["role"]),
+        Paragraph(right, styles["role_right"]),
+    ]]
+    t = Table(data, colWidths=[left_w, right_w])
+    t.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
         )
     )
+    return t
 
+
+def _two_col_sub(left, right, styles, left_w=4.7 * inch, right_w=2.0 * inch):
+    data = [[
+        Paragraph(left, styles["sub"]),
+        Paragraph(right, styles["sub_right"]),
+    ]]
+    t = Table(data, colWidths=[left_w, right_w])
+    t.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]
+        )
+    )
+    return t
+
+
+def build_pdf(path: Path) -> None:
+    page_w, page_h = A4
+    left_m = 0.6 * inch
+    right_m = 0.6 * inch
+    content_w = page_w - left_m - right_m
+    left_col = content_w * 0.72
+    right_col = content_w * 0.28
+
+    doc = SimpleDocTemplate(
+        str(path),
+        pagesize=A4,
+        leftMargin=left_m,
+        rightMargin=right_m,
+        topMargin=0.45 * inch,
+        bottomMargin=0.45 * inch,
+    )
+    s = _styles()
     story = []
-    story.append(Paragraph("AMIYA SAMAL", styles["Name"]))
+
+    # Header
+    story.append(Paragraph("AMIYA SAMAL", s["name"]))
     story.append(
         Paragraph(
-            "amiyasamal833@gmail.com &nbsp;&nbsp;|&nbsp;&nbsp; +91 8144928667 "
-            "&nbsp;&nbsp;|&nbsp;&nbsp; Bhubaneswar, Odisha, India<br/>"
-            "linkedin.com/in/amiyasamal",
-            styles["Contact"],
+            "amiyasamal833@gmail.com &nbsp;&nbsp;•&nbsp;&nbsp; "
+            "+91 8144928667 &nbsp;&nbsp;•&nbsp;&nbsp; "
+            "Bhubaneswar, Odisha, India",
+            s["contact"],
         )
     )
+    story.append(
+        Paragraph("linkedin.com/in/amiyasamal", s["contact"])
+    )
+    story.append(Spacer(1, 6))
 
-    def section(title: str) -> None:
-        story.append(Paragraph(title, styles["Section"]))
-        story.append(
-            HRFlowable(width="100%", thickness=1, color=navy, spaceBefore=0, spaceAfter=6)
-        )
-
-    section("ABOUT ME")
+    # About
+    story.append(SectionHeader("About Me", content_w))
+    story.append(Spacer(1, 4))
     story.append(
         Paragraph(
             "Motivated and detail-oriented fresher with a strong passion for software development. "
             "Enthusiastic about learning new technologies and applying problem-solving skills to "
             "real-world challenges. Passionate about full-stack development, particularly the MERN "
             "stack, and eager to work on innovative projects that enhance user experience and "
-            "efficiency. A quick learner with strong analytical skills and a collaborative mindset, "
-            "aiming to apply technical skills to real-world applications.",
-            styles["BodyText2"],
+            "efficiency. A quick learner with strong analytical skills and a collaborative mindset.",
+            s["body"],
         )
     )
+    story.append(Spacer(1, 4))
 
-    section("WORK EXPERIENCE")
+    # Experience
+    story.append(SectionHeader("Work Experience", content_w))
+    story.append(Spacer(1, 5))
+    story.append(
+        _two_col(
+            "Freelance Web Developer",
+            "01/2024 – Present",
+            s,
+            left_col,
+            right_col,
+        )
+    )
+    story.append(
+        _two_col_sub("Self-Employed", "Bhubaneswar, India", s, left_col, right_col)
+    )
     story.append(
         Paragraph(
-            "FREELANCE WEB DEVELOPER &nbsp;|&nbsp; Self-Employed &nbsp;|&nbsp; 01/2024 – Present",
-            styles["JobTitle"],
+            "•&nbsp;&nbsp;Implemented responsive design techniques for better user experience.",
+            s["bullet"],
         )
     )
     story.append(
         Paragraph(
-            "• Implemented responsive design techniques for better user experience.",
-            styles["BulletText"],
+            "•&nbsp;&nbsp;Managed website hosting and maintenance for clients.",
+            s["bullet"],
         )
     )
-    story.append(
-        Paragraph(
-            "• Managed website hosting and maintenance for clients.",
-            styles["BulletText"],
-        )
-    )
+    story.append(Spacer(1, 4))
 
-    section("EDUCATION")
+    # Education
+    story.append(SectionHeader("Education", content_w))
+    story.append(Spacer(1, 5))
     story.append(
-        Paragraph(
-            "Bachelor of Technology in Computer Science, GANDHI ENGINEERING COLLEGE &nbsp;|&nbsp; 2022 – 2026",
-            styles["JobTitle"],
+        _two_col(
+            "Bachelor of Technology in Computer Science",
+            "2022 – 2026",
+            s,
+            left_col,
+            right_col,
         )
     )
-    story.append(Paragraph("Bhubaneswar, Odisha, India", styles["Meta"]))
     story.append(
-        Paragraph(
-            "Intermediate in Science (ISC) - Science, SADHU GOURESWAR COLLEGE &nbsp;|&nbsp; 2020 – 2022 (70.33%)",
-            styles["JobTitle"],
+        _two_col_sub(
+            "Gandhi Engineering College",
+            "Bhubaneswar, Odisha",
+            s,
+            left_col,
+            right_col,
         )
     )
-    story.append(Paragraph("Jajpur, Odisha, India", styles["Meta"]))
+    story.append(Spacer(1, 3))
     story.append(
-        Paragraph(
-            "Primary Education, KANTABANIA HIGH SCHOOL &nbsp;|&nbsp; 2020 (68.83%)",
-            styles["JobTitle"],
+        _two_col(
+            "Intermediate in Science (ISC) — 70.33%",
+            "2020 – 2022",
+            s,
+            left_col,
+            right_col,
         )
     )
-    story.append(Paragraph("Jajpur, Odisha, India", styles["Meta"]))
+    story.append(
+        _two_col_sub(
+            "Sadhu Goureswar College",
+            "Jajpur, Odisha",
+            s,
+            left_col,
+            right_col,
+        )
+    )
+    story.append(Spacer(1, 3))
+    story.append(
+        _two_col(
+            "High School Certificate — 68.83%",
+            "2020",
+            s,
+            left_col,
+            right_col,
+        )
+    )
+    story.append(
+        _two_col_sub(
+            "Kantabania High School",
+            "Jajpur, Odisha",
+            s,
+            left_col,
+            right_col,
+        )
+    )
+    story.append(Spacer(1, 4))
 
-    section("SKILLS")
+    # Skills
+    story.append(SectionHeader("Skills", content_w))
+    story.append(Spacer(1, 4))
     skills = [
-        ("<b>Programming Languages:</b> C, C++, Python, Java"),
+        ("<b>Programming:</b>&nbsp;&nbsp;C, C++, Python, Java"),
         (
-            "<b>Web Development:</b> HTML, CSS, JavaScript, MERN Stack "
-            "(MongoDB, Express.js, React.js, Node.js), FastAPI"
+            "<b>Web Development:</b>&nbsp;&nbsp;HTML, CSS, JavaScript, React.js, Node.js, "
+            "Express.js, MongoDB, FastAPI"
         ),
-        ("<b>Database:</b> MySQL, SQLite"),
-        ("<b>Tools &amp; Practices:</b> Git &amp; GitHub, REST APIs, AWS S3"),
-        ("<b>Soft Skills:</b> Problem Solving, Logical Thinking, Communication &amp; Teamwork"),
+        ("<b>Databases:</b>&nbsp;&nbsp;MySQL, SQLite"),
+        ("<b>Tools:</b>&nbsp;&nbsp;Git, GitHub, REST APIs, AWS S3"),
+        ("<b>Soft Skills:</b>&nbsp;&nbsp;Problem Solving, Communication, Teamwork"),
     ]
     for line in skills:
-        story.append(Paragraph(line, styles["SkillLine"]))
+        story.append(Paragraph(line, s["skill"]))
+    story.append(Spacer(1, 4))
 
-    section("PROJECTS")
-    story.append(Paragraph("PERSONAL PORTFOLIO WEBSITE", styles["JobTitle"]))
+    # Projects
+    story.append(SectionHeader("Projects", content_w))
+    story.append(Spacer(1, 3))
+
+    story.append(Paragraph("Personal Portfolio Website", s["proj_title"]))
     story.append(
         Paragraph(
-            "Designed and developed a personal portfolio website to showcase projects and skills "
-            "using HTML, CSS, and JavaScript. Technologies Used: HTML, CSS, JavaScript, Bootstrap",
-            styles["BodyText2"],
+            "Designed and developed a personal portfolio website to showcase projects and skills. "
+            "<i>Technologies: HTML, CSS, JavaScript, Bootstrap</i>",
+            s["body"],
         )
     )
 
     story.append(
         Paragraph(
-            "RESOLINE CRM — Full-Stack Business Operations Platform",
-            styles["JobTitle"],
+            "Resoline CRM — Full-Stack Business Operations Platform",
+            s["proj_title"],
         )
     )
     for item in CRM_BULLETS:
-        story.append(Paragraph(f"• {item}", styles["BulletText"]))
+        story.append(Paragraph(f"•&nbsp;&nbsp;{item}", s["bullet"]))
 
-    section("CERTIFICATIONS")
+    story.append(Spacer(1, 4))
+
+    # Certifications
+    story.append(SectionHeader("Certifications", content_w))
+    story.append(Spacer(1, 4))
     story.append(
         Paragraph(
-            "Introduction to Python &nbsp;|&nbsp; Full-stack web development &nbsp;|&nbsp; Data Analysis",
-            styles["BodyText2"],
+            "Introduction to Python &nbsp;&nbsp;|&nbsp;&nbsp; "
+            "Full-Stack Web Development &nbsp;&nbsp;|&nbsp;&nbsp; "
+            "Data Analysis",
+            s["cert"],
         )
     )
 
     doc.build(story)
+
+
+def _set_run_font(run, name="Calibri", size=10, bold=False, color=None, italic=False):
+    run.font.name = name
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), name)
+    run.font.size = Pt(size)
+    run.bold = bold
+    run.italic = italic
+    if color:
+        run.font.color.rgb = color
+
+
+def _add_bottom_border(paragraph):
+    p = paragraph._p
+    pPr = p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "12")
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), "1B4F72")
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+
+def _heading(doc, text: str):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(10)
+    p.paragraph_format.space_after = Pt(2)
+    run = p.add_run(text.upper())
+    _set_run_font(run, size=11, bold=True, color=RGBColor(0x0F, 0x29, 0x42))
+    _add_bottom_border(p)
+    return p
+
+
+def _row(doc, left: str, right: str, left_bold=True, italic=False):
+    """Single paragraph with left text and right-aligned tab stop for dates."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(0)
+    tab_stops = p.paragraph_format.tab_stops
+    tab_stops.add_tab_stop(Inches(6.5), WD_TAB_ALIGNMENT.RIGHT)
+    r1 = p.add_run(left)
+    _set_run_font(
+        r1,
+        size=10 if left_bold else 9,
+        bold=left_bold,
+        italic=italic and not left_bold,
+        color=RGBColor(0x33, 0x33, 0x33) if italic else RGBColor(0x00, 0x00, 0x00),
+    )
+    r2 = p.add_run("\t" + right)
+    _set_run_font(
+        r2,
+        size=9.5,
+        italic=italic,
+        color=RGBColor(0x55, 0x55, 0x55),
+    )
+    return p
+
+
+def _bullet(doc, text: str):
+    p = doc.add_paragraph(style="List Bullet")
+    p.clear()
+    p.paragraph_format.space_before = Pt(1)
+    p.paragraph_format.space_after = Pt(1)
+    p.paragraph_format.left_indent = Inches(0.2)
+    r = p.add_run(text)
+    _set_run_font(r, size=9.5)
+    return p
+
+
+def build_docx(path: Path) -> None:
+    doc = Document()
+    for section in doc.sections:
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
+        section.left_margin = Inches(0.7)
+        section.right_margin = Inches(0.7)
+
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10)
+    style._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+
+    # Name
+    name = doc.add_paragraph()
+    name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    name.paragraph_format.space_after = Pt(2)
+    r = name.add_run("AMIYA SAMAL")
+    _set_run_font(r, size=20, bold=True, color=RGBColor(0x0F, 0x29, 0x42))
+
+    contact = doc.add_paragraph()
+    contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    contact.paragraph_format.space_after = Pt(0)
+    r = contact.add_run(
+        "amiyasamal833@gmail.com  •  +91 8144928667  •  Bhubaneswar, Odisha, India"
+    )
+    _set_run_font(r, size=9, color=RGBColor(0x55, 0x55, 0x55))
+
+    linkedin = doc.add_paragraph()
+    linkedin.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    linkedin.paragraph_format.space_after = Pt(4)
+    r = linkedin.add_run("linkedin.com/in/amiyasamal")
+    _set_run_font(r, size=9, color=RGBColor(0x55, 0x55, 0x55))
+
+    # About
+    _heading(doc, "About Me")
+    about = doc.add_paragraph()
+    about.paragraph_format.space_before = Pt(4)
+    about.paragraph_format.space_after = Pt(2)
+    r = about.add_run(
+        "Motivated and detail-oriented fresher with a strong passion for software development. "
+        "Enthusiastic about learning new technologies and applying problem-solving skills to "
+        "real-world challenges. Passionate about full-stack development, particularly the MERN "
+        "stack, and eager to work on innovative projects that enhance user experience and "
+        "efficiency. A quick learner with strong analytical skills and a collaborative mindset."
+    )
+    _set_run_font(r, size=9.5)
+
+    # Experience
+    _heading(doc, "Work Experience")
+    _row(doc, "Freelance Web Developer", "01/2024 – Present")
+    _row(doc, "Self-Employed", "Bhubaneswar, India", left_bold=False, italic=True)
+    _bullet(doc, "Implemented responsive design techniques for better user experience.")
+    _bullet(doc, "Managed website hosting and maintenance for clients.")
+
+    # Education
+    _heading(doc, "Education")
+    _row(doc, "Bachelor of Technology in Computer Science", "2022 – 2026")
+    _row(doc, "Gandhi Engineering College", "Bhubaneswar, Odisha", left_bold=False, italic=True)
+    _row(doc, "Intermediate in Science (ISC) — 70.33%", "2020 – 2022")
+    _row(doc, "Sadhu Goureswar College", "Jajpur, Odisha", left_bold=False, italic=True)
+    _row(doc, "High School Certificate — 68.83%", "2020")
+    _row(doc, "Kantabania High School", "Jajpur, Odisha", left_bold=False, italic=True)
+
+    # Skills
+    _heading(doc, "Skills")
+    skills = [
+        ("Programming: ", "C, C++, Python, Java"),
+        (
+            "Web Development: ",
+            "HTML, CSS, JavaScript, React.js, Node.js, Express.js, MongoDB, FastAPI",
+        ),
+        ("Databases: ", "MySQL, SQLite"),
+        ("Tools: ", "Git, GitHub, REST APIs, AWS S3"),
+        ("Soft Skills: ", "Problem Solving, Communication, Teamwork"),
+    ]
+    for label, value in skills:
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(1)
+        p.paragraph_format.space_after = Pt(1)
+        r1 = p.add_run(label)
+        _set_run_font(r1, size=9.5, bold=True)
+        r2 = p.add_run(value)
+        _set_run_font(r2, size=9.5)
+
+    # Projects
+    _heading(doc, "Projects")
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(1)
+    r = p.add_run("Personal Portfolio Website")
+    _set_run_font(r, size=10, bold=True)
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(2)
+    r = p.add_run(
+        "Designed and developed a personal portfolio website to showcase projects and skills. "
+        "Technologies: HTML, CSS, JavaScript, Bootstrap"
+    )
+    _set_run_font(r, size=9.5)
+
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(1)
+    r = p.add_run("Resoline CRM — Full-Stack Business Operations Platform")
+    _set_run_font(r, size=10, bold=True)
+    for item in CRM_BULLETS:
+        _bullet(doc, item)
+
+    # Certifications
+    _heading(doc, "Certifications")
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    r = p.add_run(
+        "Introduction to Python  |  Full-Stack Web Development  |  Data Analysis"
+    )
+    _set_run_font(r, size=9.5)
+
+    doc.save(path)
 
 
 def main() -> None:
@@ -386,9 +593,8 @@ def main() -> None:
     docx_path = OUT_DIR / "AMIYA_Resume.docx"
     build_pdf(pdf_path)
     build_docx(docx_path)
-    print(f"Wrote {pdf_path}")
-    print(f"Wrote {docx_path}")
-    print(f"CRM bullets: {len(CRM_BULLETS)}")
+    print(f"Wrote {pdf_path} ({pdf_path.stat().st_size} bytes)")
+    print(f"Wrote {docx_path} ({docx_path.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
